@@ -8,11 +8,16 @@ from libs.embed import EmbedHelper
 
 
 class WordCloud(commands.Cog):
+    wordcloud_group = app_commands.Group(
+        name="wordcloud",
+        description="ワードクラウド関連のコマンド",
+    )
+
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
-    @app_commands.command(
-        name="wordcloud",
+    @wordcloud_group.command(
+        name="generate",
         description="ワードクラウドを生成します",
     )
     @app_commands.describe(
@@ -138,7 +143,9 @@ class WordCloud(commands.Cog):
             binary_data=image_buffer.getvalue(),
             binary_filename="wordcloud.png",
         )
-        await interaction.followup.send(embed=embed)
+        await interaction.followup.send(
+            embed=embed, file=discord.File(fp=image_buffer, filename="wordcloud.png")
+        )
 
 
 async def setup(bot: commands.Bot):
