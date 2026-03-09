@@ -4,6 +4,7 @@ from discord.ext import commands
 from datetime import timedelta
 from typing import Optional
 from libs.visualize import generate_wordcloud_image
+from libs.embed import EmbedHelper
 
 
 class WordCloud(commands.Cog):
@@ -28,10 +29,13 @@ class WordCloud(commands.Cog):
         channel: Optional[discord.TextChannel] = None,
         role: Optional[discord.Role] = None,
     ):
+        embed_helper = EmbedHelper(function_name="WordCloud")
         if interaction.guild_id is None:
-            await interaction.response.send_message(
-                "このコマンドはサーバー内でご利用ください。", ephemeral=True
+            embed = embed_helper.create_error_embed(
+                title="エラー",
+                description="このコマンドはサーバー内でご利用ください。",
             )
+            await interaction.response.send_message(embed=embed, ephemeral=True)
             return
 
         # periodを数値化してクエリに追加。指定がない場合はデータ保持期間(30日)を使用
@@ -46,14 +50,16 @@ class WordCloud(commands.Cog):
                     }
                 }
             except ValueError:
-                await interaction.response.send_message(
-                    "期間は数値で指定してください。", ephemeral=True
+                embed = embed_helper.create_error_embed(
+                    title="エラー", description="期間は数値で指定してください。"
                 )
+                await interaction.response.send_message(embed=embed, ephemeral=True)
                 return
             except Exception as e:
-                await interaction.response.send_message(
-                    "期間の処理中にエラーが発生しました", ephemeral=True
+                embed = embed_helper.create_error_embed(
+                    title="エラー", description="期間の処理中にエラーが発生しました"
                 )
+                await interaction.response.send_message(embed=embed, ephemeral=True)
                 print(f"Error processing period: {e}")
                 return
 
@@ -91,14 +97,20 @@ class WordCloud(commands.Cog):
                 .limit(3000)
             )
         except Exception as e:
-            await interaction.followup.send(
-                "データベースクエリ中にエラーが発生しました"
+            embed = embed_helper.create_error_embed(
+                title="データベースエラー",
+                description="データベースクエリ中にエラーが発生しました",
             )
+            await interaction.followup.send(embed=embed)
             print(f"Database query error: {e}")
             return
 
         if not docs:
-            await interaction.followup.send("解析対象のメッセージがまだないようです。")
+            embed = embed_helper.create_warning_embed(
+                title="会話不足",
+                description="解析対象のメッセージがまだないようです。",
+            )
+            await interaction.followup.send(embed=embed)
             return
 
         raw_text = " ".join(doc.get("content", "") for doc in docs)
@@ -106,20 +118,27 @@ class WordCloud(commands.Cog):
         try:
             image_buffer = generate_wordcloud_image(raw_text)
         except ValueError:
-            await interaction.followup.send(
-                "表示できる単語が不足しています。もう少しメッセージが集まってから再度お試しください。"
+            embed = embed_helper.create_warning_embed(
+                title="語彙不足",
+                description="表示できる単語が不足しています。もう少しメッセージが集まってから再度お試しください。",
             )
+            await interaction.followup.send(embed=embed)
             return
         except RuntimeError:
-            await interaction.followup.send(
-                "日本語フォントが見つからないため生成できませんでした。"
+            embed = embed_helper.create_error_embed(
+                title="内部エラー",
+                description="日本語フォントが見つからないため生成できませんでした。Bot管理者にお問い合わせください。",
             )
+            await interaction.followup.send(embed=embed)
             return
 
-        await interaction.followup.send(
-            content=f"最新{len(docs)}件のメッセージから生成しました！",
-            file=discord.File(fp=image_buffer, filename="wordcloud.png"),
+        embed = embed_helper.create_success_embed(
+            title="生成成功",
+            description=f"最新{len(docs)}件のメッセージが取得でき、WordCloudが生成されました！",
+            binary_data=image_buffer.getvalue(),
+            binary_filename="wordcloud.png",
         )
+        await interaction.followup.send(embed=embed)
 
 
 async def setup(bot: commands.Bot):
