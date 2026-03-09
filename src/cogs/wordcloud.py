@@ -17,12 +17,16 @@ class WordCloud(commands.Cog):
     @app_commands.describe(
         period="ワードクラウドの元になる期間（単位: 日。省略した場合はデータ保持期間(デフォルト: 一ヶ月)）",
         user="特定のユーザーのメッセージからワードクラウドを生成します（省略した場合は全ユーザーのメッセージから生成）",
+        channel="特定のチャンネルのメッセージからワードクラウドを生成します（省略した場合は全チャンネルのメッセージから生成）",
+        role="特定のロールを持つユーザーのメッセージからワードクラウドを生成します（省略した場合は全ユーザーのメッセージから生成）",
     )
     async def wordcloud(
         self,
         interaction: discord.Interaction,
         period: Optional[str] = None,
         user: Optional[discord.User] = None,
+        channel: Optional[discord.TextChannel] = None,
+        role: Optional[discord.Role] = None,
     ):
         if interaction.guild_id is None:
             await interaction.response.send_message(
@@ -59,6 +63,16 @@ class WordCloud(commands.Cog):
         if user is not None:
             user_filter = {"user_id": str(user.id)}
 
+        # channelが指定された場合はクエリに追加
+        channel_filter = {}
+        if channel is not None:
+            channel_filter = {"channel_id": str(channel.id)}
+
+        # roleが指定された場合はクエリに追加
+        role_filter = {}
+        if role is not None:
+            role_filter = {"role_ids": {"$in": [str(role.id)]}}
+
         await interaction.response.defer(thinking=True)
 
         try:
@@ -69,6 +83,8 @@ class WordCloud(commands.Cog):
                         "content": {"$type": "string", "$ne": ""},
                         **period_filter,
                         **user_filter,
+                        **channel_filter,
+                        **role_filter,
                     },
                     {"content": 1},
                 )

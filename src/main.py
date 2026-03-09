@@ -47,6 +47,8 @@ async def on_message(message):
     if message.guild is None:
         return
 
+    roles = message.author.roles
+
     data = {
         "guild_id": str(message.guild.id),
         "guild_name": message.guild.name,
@@ -56,6 +58,7 @@ async def on_message(message):
         "channel_name": str(message.channel),
         "content": message.content,
         "timestamp": message.created_at.isoformat(),
+        "role_ids": [str(role.id) for role in roles] if roles else [],
     }
 
     bot.db.messages.insert_one(data)
