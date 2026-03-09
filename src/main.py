@@ -1,8 +1,12 @@
 import discord
 import os
+import sys
 import asyncio
 from pymongo import MongoClient
 from discord.ext import commands
+
+# Add src directory to sys.path for imports
+sys.path.insert(0, os.path.dirname(__file__))
 
 TOKEN = os.getenv("DISCORD_TOKEN")
 DB_DSN = os.getenv("MONGODB_DSN")
@@ -71,6 +75,7 @@ async def main():
 
     await bot.load_extension("cogs.ping")
     await bot.load_extension("cogs.wordcloud")
+    await bot.load_extension("cogs.about")
 
     async with bot:
         await bot.start(TOKEN)
