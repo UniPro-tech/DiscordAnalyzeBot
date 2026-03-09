@@ -1,0 +1,35 @@
+name: analyze-bot
+services:
+  analyze-bot:
+    build: .
+    container_name: analyze-bot
+    restart: unless-stopped
+    environment:
+      DISCORD_TOKEN: your_discord_bot_token_here
+      MONGODB_DSN: mongodb://analyze-bot:rootpassword@mongodb:27017/analyze-bot
+  mongodb:
+    image: mongo:latest
+    container_name: analyze-bot-mongodb
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: analyze-bot
+      MONGO_INITDB_ROOT_PASSWORD: rootpassword
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+  mongodb-express:
+    image: mongo-express:latest
+    container_name: analyze-bot-mongodb-express
+    restart: unless-stopped
+    environment:
+      ME_CONFIG_MONGODB_ADMINUSERNAME: analyze-bot
+      ME_CONFIG_MONGODB_ADMINPASSWORD: rootpassword
+      ME_CONFIG_MONGODB_SERVER: mongodb
+    ports:
+      - "8081:8081"
+volumes:
+  mongodb_data:
+networks:
+  analyze-bot-network:
+    driver: bridge

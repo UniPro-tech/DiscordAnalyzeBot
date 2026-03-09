@@ -1,0 +1,18 @@
+[project]
+name = "analyze-bot"
+version = "0.1.0"
+description = "This is a Discord bot that analyzes the frequency of words used in messages and generates a word cloud."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "discord-py>=2.7.1",
+    "janome>=0.5.0",
+    "matplotlib>=3.10.8",
+    "pymongo>=4.16.0",
+    "wordcloud>=1.9.6",
+]
+
+[dependency-groups]
+dev = [
+    "python-dotenv>=1.2.2",
+]
