@@ -6,7 +6,7 @@ services:
     restart: unless-stopped
     environment:
       DISCORD_TOKEN: your_discord_bot_token_here
-      MONGODB_DSN: mongodb://analyze-bot:rootpassword@mongodb:27017/analyze-bot
+      MONGODB_DSN: mongodb://analyze-bot:rootpassword@mongodb:27017/analyze-bot?authSource=admin
   mongodb:
     image: mongo:latest
     container_name: analyze-bot-mongodb
