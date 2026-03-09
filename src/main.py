@@ -27,7 +27,7 @@ def setup_db():
     bot.db.messages.create_index("user_id")
     bot.db.messages.create_index("channel_id")
     bot.db.messages.create_index("timestamp")
-    bot.db.aggregates.create_index("guild_id")
+    bot.db.messages.create_index("guild_id")
 
 
 @bot.event
