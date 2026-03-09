@@ -2,9 +2,6 @@ FROM ghcr.io/astral-sh/uv:debian-slim
 
 WORKDIR /app
 
-COPY pyproject.toml .
-COPY uv.lock* ./
-
 RUN apt update
 RUN apt install -y ca-certificates
 
@@ -12,6 +9,9 @@ RUN apt install -y ca-certificates
 ENV PYTHONUNBUFFERED=1
 # 2. .pycファイルを作成しない設定（コンテナを軽量に保つ）
 ENV PYTHONDONTWRITEBYTECODE=1
+
+COPY pyproject.toml .
+COPY uv.lock* ./
 
 # Disable development dependencies
 ENV UV_NO_DEV=1
