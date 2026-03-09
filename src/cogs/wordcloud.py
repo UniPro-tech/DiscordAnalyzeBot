@@ -36,7 +36,6 @@ class WordCloud(commands.Cog):
 
         # periodを数値化してクエリに追加。指定がない場合はデータ保持期間(30日)を使用
         period_filter = {}
-        print(f"Received wordcloud command with period={period} and user={user}")
         if period is not None:
             try:
                 period_filter = {
