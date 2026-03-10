@@ -49,6 +49,12 @@ def setup_db():
     bot.db.user_settings.create_index("user_id", unique=True)
     bot.db.user_settings.create_index("opt_out")
 
+    # チャンネル設定コレクションのインデックス設定
+    bot.db.channel_settings.create_index(
+        [("guild_id", 1), ("channel_id", 1)], unique=True
+    )
+    bot.db.channel_settings.create_index("opt_out")
+
 
 @bot.event
 async def on_ready():
@@ -63,6 +69,13 @@ async def on_message(message):
 
     if message.guild is None:
         return
+
+    if channel_opt_out := bot.db.channel_settings.find_one(
+        {"guild_id": str(message.guild.id), "channel_id": str(message.channel.id)}
+    ):
+        # チャンネル単位でOptout=trueならデータ収集しない
+        if channel_opt_out.get("opt_out", False):
+            return
 
     if opt_out := bot.db.user_settings.find_one({"user_id": str(message.author.id)}):
         # Optout=trueならデータ収集しない

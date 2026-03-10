@@ -6,24 +6,25 @@ from libs.embed import EmbedHelper
 
 
 class Optout(commands.Cog):
+    optout_group = app_commands.Group(
+        name="optout",
+        description="統計データからのオプトアウト設定",
+    )
+
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
-    async def _delete_user_messages_background(self, user_id: str):
+    async def _delete_messages_background(self, query: dict, scope: str):
         try:
             # pymongo is synchronous, so run in a thread to avoid blocking the event loop.
-            result = await asyncio.to_thread(
-                self.bot.db.messages.delete_many, {"user_id": user_id}
-            )
+            result = await asyncio.to_thread(self.bot.db.messages.delete_many, query)
             print(
-                f"[Optout] Background recursive delete completed for user_id={user_id}, deleted={result.deleted_count}"
+                f"[Optout] Background recursive delete completed for {scope}, deleted={result.deleted_count}"
             )
         except Exception as e:
-            print(
-                f"[Optout] Background recursive delete failed for user_id={user_id}: {e}"
-            )
+            print(f"[Optout] Background recursive delete failed for {scope}: {e}")
 
-    @app_commands.command(name="optout", description="統計データからのオプトアウト")
+    @optout_group.command(name="user", description="ユーザー単位のオプトアウト")
     @app_commands.describe(
         optout="オプトアウトするかどうか",
         recursive="過去のメッセージまで遡ってオプトアウトするかどうか (オプトアウトする場合のみ有効。この変更は時間を要する可能性があります)",
@@ -38,7 +39,7 @@ class Optout(commands.Cog):
             app_commands.Choice(name="いいえ", value="no"),
         ],
     )
-    async def optout(
+    async def optout_user(
         self,
         interaction: discord.Interaction,
         optout: app_commands.Choice[str],
@@ -71,13 +72,114 @@ class Optout(commands.Cog):
             return
 
         if opt_out_value and recursive_value:
-            asyncio.create_task(self._delete_user_messages_background(user_id))
+            asyncio.create_task(
+                self._delete_messages_background(
+                    {"user_id": user_id},
+                    f"user_id={user_id}",
+                )
+            )
 
         embed = embed_helper.create_success_embed(
             title="オプトアウト設定",
             description=(
                 f"{interaction.user.mention}さんは統計データから"
                 f"{'オプトアウト' if opt_out_value else 'オプトイン'}されました。"
+                + (
+                    "\n過去メッセージの削除をバックグラウンドで開始しました。"
+                    if opt_out_value and recursive_value
+                    else ""
+                )
+            ),
+        )
+        await interaction.response.send_message(embed=embed)
+
+    @optout_group.command(name="channel", description="チャンネル単位のオプトアウト")
+    @app_commands.default_permissions(manage_channels=True)
+    @app_commands.describe(
+        optout="このチャンネルをオプトアウトするかどうか",
+        channel="対象チャンネル (省略時は実行中のチャンネル)",
+        recursive="過去のメッセージまで遡って削除するかどうか (オプトアウトする場合のみ有効)",
+    )
+    @app_commands.choices(
+        optout=[
+            app_commands.Choice(name="はい", value="yes"),
+            app_commands.Choice(name="いいえ", value="no"),
+        ],
+        recursive=[
+            app_commands.Choice(name="はい", value="yes"),
+            app_commands.Choice(name="いいえ", value="no"),
+        ],
+    )
+    async def optout_channel(
+        self,
+        interaction: discord.Interaction,
+        optout: app_commands.Choice[str],
+        channel: discord.TextChannel | None = None,
+        recursive: app_commands.Choice[str] | None = None,
+    ):
+        embed_helper = EmbedHelper(function_name="Optout Channel")
+
+        if interaction.guild is None:
+            embed = embed_helper.create_error_embed(
+                title="エラー",
+                description="このコマンドはサーバー内で利用してください。",
+            )
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+            return
+
+        target_channel = channel
+        if target_channel is None:
+            if isinstance(interaction.channel, discord.TextChannel):
+                target_channel = interaction.channel
+            else:
+                embed = embed_helper.create_error_embed(
+                    title="チャンネル指定エラー",
+                    description="対象チャンネルを指定してください。テキストチャンネルでこのコマンドを実行するか、`channel` オプションでチャンネルを指定してください。",
+                )
+                await interaction.response.send_message(embed=embed, ephemeral=True)
+                return
+
+        guild_id = str(interaction.guild.id)
+        channel_id = str(target_channel.id)
+        opt_out_value = optout.value == "yes"
+        recursive_value = (recursive.value if recursive else "no") == "yes"
+
+        if recursive_value and not opt_out_value:
+            embed = embed_helper.create_error_embed(
+                title="入力エラー",
+                description="`recursive` はオプトアウト時のみ指定できます。",
+            )
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+            return
+
+        try:
+            self.bot.db.channel_settings.update_one(
+                {"guild_id": guild_id, "channel_id": channel_id},
+                {"$set": {"opt_out": opt_out_value}},
+                upsert=True,
+            )
+        except Exception as e:
+            print(f"Error in optout channel command: {e}")
+            embed = embed_helper.create_error_embed(
+                title="DBエラー",
+                description="チャンネルオプトアウト設定中にエラーが発生しました。もう一度お試しください。",
+            )
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+            return
+
+        if opt_out_value and recursive_value:
+            asyncio.create_task(
+                self._delete_messages_background(
+                    {"guild_id": guild_id, "channel_id": channel_id},
+                    f"guild_id={guild_id},channel_id={channel_id}",
+                )
+            )
+
+        embed = embed_helper.create_success_embed(
+            title="チャンネルオプトアウト設定",
+            description=(
+                f"{target_channel.mention} を統計データから"
+                f"{'オプトアウト' if opt_out_value else 'オプトイン'}しました。"
                 + (
                     "\n過去メッセージの削除をバックグラウンドで開始しました。"
                     if opt_out_value and recursive_value
