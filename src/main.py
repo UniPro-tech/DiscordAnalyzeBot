@@ -28,6 +28,7 @@ bot.db = client_db["discord_analyzer"]
 
 
 def setup_db():
+    # メッセージコレクションのインデックス設定
     bot.db.messages.create_index("user_id")
     bot.db.messages.create_index("channel_id")
     bot.db.messages.create_index("guild_id")
@@ -35,12 +36,16 @@ def setup_db():
     # TTL Index: 30日後に自動的に削除
     bot.db.messages.create_index("timestamp", expireAfterSeconds=30 * 24 * 60 * 60)
 
-    # Guild settings collection indexes
+    # Guild設定のインデックス設定
     bot.db.guild_settings.create_index(
         [("guild_id", 1), ("channel_id", 1), ("frequency", 1)], unique=True
     )
     bot.db.guild_settings.create_index("guild_id")
     bot.db.guild_settings.create_index("enabled")
+
+    # ユーザー設定コレクションのインデックス設定
+    bot.db.user_settings.create_index("user_id", unique=True)
+    bot.db.user_settings.create_index("opt_out")
 
 
 @bot.event
@@ -56,6 +61,11 @@ async def on_message(message):
 
     if message.guild is None:
         return
+
+    if opt_out := bot.db.user_settings.find_one({"user_id": str(message.author.id)}):
+        # Optout=trueならデータ収集しない
+        if opt_out.get("opt_out", False):
+            return
 
     roles = message.author.roles
 
@@ -83,6 +93,7 @@ async def main():
     await bot.load_extension("cogs.ping")
     await bot.load_extension("cogs.wordcloud")
     await bot.load_extension("cogs.about")
+    await bot.load_extension("cogs.optout")
 
     async with bot:
         await bot.start(TOKEN)
