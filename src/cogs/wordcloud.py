@@ -158,6 +158,7 @@ class WordCloud(commands.Cog):
         name="schedule",
         description="指定されたチャンネルに定期的にワードクラウドを送信するようスケジュールします",
     )
+    @app_commands.default_permissions(manage_channels=True)
     @app_commands.describe(
         channel="ワードクラウドを送信するチャンネル",
         frequency="送信頻度 (daily / weekly / monthly)",
@@ -246,6 +247,7 @@ class WordCloud(commands.Cog):
         name="list",
         description="このサーバーで設定されているワードクラウドスケジュールを一覧表示します",
     )
+    @app_commands.default_permissions(manage_channels=True)
     async def list_schedules(self, interaction: discord.Interaction):
         embed_helper = EmbedHelper(function_name="WordCloud Schedule List")
 
@@ -320,6 +322,7 @@ class WordCloud(commands.Cog):
         name="remove",
         description="指定されたワードクラウドスケジュールを削除します",
     )
+    @app_commands.default_permissions(manage_channels=True)
     @app_commands.describe(
         channel="削除するスケジュールのチャンネル",
         frequency="削除するスケジュールの頻度 (daily / weekly / monthly)",
