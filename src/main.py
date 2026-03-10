@@ -35,6 +35,13 @@ def setup_db():
     # TTL Index: 30日後に自動的に削除
     bot.db.messages.create_index("timestamp", expireAfterSeconds=30 * 24 * 60 * 60)
 
+    # Guild settings collection indexes
+    bot.db.guild_settings.create_index(
+        [("guild_id", 1), ("channel_id", 1), ("frequency", 1)], unique=True
+    )
+    bot.db.guild_settings.create_index("guild_id")
+    bot.db.guild_settings.create_index("enabled")
+
 
 @bot.event
 async def on_ready():
