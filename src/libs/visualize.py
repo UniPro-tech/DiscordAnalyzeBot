@@ -7,6 +7,10 @@ import matplotlib
 from janome.tokenizer import Tokenizer
 from wordcloud import WordCloud
 
+import networkx as nx
+import matplotlib.pyplot as plt
+import matplotlib.font_manager as fm
+
 matplotlib.use("Agg")
 STOP_WORDS = {
     "ので",
@@ -157,6 +161,76 @@ def generate_wordcloud_from_file(
     image_buffer = generate_wordcloud_image(text)
     with open(output_file_path, "wb") as f:
         f.write(image_buffer.getvalue())
+
+
+def generate_conversation_network(edges: dict) -> io.BytesIO:
+
+    font_path = resolve_font_path()
+    font_prop = None
+
+    if font_path:
+        font_prop = fm.FontProperties(fname=font_path)
+
+    G = nx.Graph()
+
+    # ユーザー名 → ノードID
+    node_map = {}
+    labels = {}
+    node_index = 0
+
+    for (a, b), weight in edges.items():
+
+        if weight < 2:
+            continue
+
+        if a not in node_map:
+            node_map[a] = node_index
+            labels[node_index] = a
+            node_index += 1
+
+        if b not in node_map:
+            node_map[b] = node_index
+            labels[node_index] = b
+            node_index += 1
+
+        G.add_edge(node_map[a], node_map[b], weight=weight)
+
+    pos = nx.kamada_kawai_layout(G)
+
+    plt.figure(figsize=(24, 24))
+
+    weights = [G[u][v]["weight"] for u, v in G.edges()]
+
+    nx.draw(
+        G,
+        pos,
+        node_color="#A0CBE2",
+        node_size=5000,
+        width=[w * 0.8 for w in weights],
+        with_labels=False,
+    )
+
+    texts = nx.draw_networkx_labels(
+        G,
+        pos,
+        labels,
+        font_size=30,
+    )
+
+    # 日本語フォント適用
+    if font_prop:
+        for t in texts.values():
+            t.set_fontproperties(font_prop)
+
+    buffer = io.BytesIO()
+
+    plt.axis("off")
+    plt.savefig(buffer, format="png", bbox_inches="tight")
+    plt.close()
+
+    buffer.seek(0)
+
+    return buffer
 
 
 if __name__ == "__main__":

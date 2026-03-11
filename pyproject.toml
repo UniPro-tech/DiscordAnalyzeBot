@@ -8,7 +8,9 @@ dependencies = [
     "discord-py>=2.7.1",
     "janome>=0.5.0",
     "matplotlib>=3.10.8",
+    "networkx>=3.6.1",
     "pymongo>=4.16.0",
+    "scipy>=1.17.1",
     "wordcloud>=1.9.6",
 ]
 
