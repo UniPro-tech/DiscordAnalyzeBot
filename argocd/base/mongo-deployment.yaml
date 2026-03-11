@@ -1,0 +1,34 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mongo
+spec:
+  selector:
+    matchLabels:
+      app: mongo
+  template:
+    metadata:
+      labels:
+        app: mongo
+    spec:
+      containers:
+        - image: mongo:8.0.0
+          name: mongo
+          volumeMounts:
+            - mountPath: /data/configdb
+              name: mongo-configdb
+            - mountPath: /data/db
+              name: mongo-db
+          envFrom:
+            - secretRef:
+                name: mongo-secret
+          env:
+            - name: TZ
+              value: Asia/Tokyo
+      volumes:
+        - persistentVolumeClaim:
+            claimName: db-config
+          name: mongo-configdb
+        - persistentVolumeClaim:
+            claimName: db-data
+          name: mongo-db

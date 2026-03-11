@@ -1,0 +1,14 @@
+apiVersion: argocd-image-updater.argoproj.io/v1alpha1
+kind: ImageUpdater
+metadata:
+  name: analyze-bot
+  namespace: argocd
+spec:
+  namespace: argocd
+  applicationRefs:
+    - namePattern: "analyze-bot"
+      images:
+        - alias: "analyze-bot"
+          imageName: "registry.uniproject.jp/official/analyze-bot:x.x.x"
+          commonUpdateSettings:
+            updateStrategy: "semver"
