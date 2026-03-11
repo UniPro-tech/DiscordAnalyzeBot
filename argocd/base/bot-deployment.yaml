@@ -14,7 +14,7 @@ spec:
     spec:
       containers:
         - name: analyze-bot
-          image: registry.uniproject.jp/official/analyze-bot:0.2.0
+          image: registry.uniproject.jp/official/analyze-bot:0.3.0
           imagePullPolicy: IfNotPresent
           resources:
             requests:
