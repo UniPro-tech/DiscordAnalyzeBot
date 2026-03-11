@@ -15,9 +15,6 @@ spec:
         metrics: true
         tracing: true
       priority: 1
-      middlewares:
-        - name: redirect-to-www
-          namespace: analyze-bot-site
       services:
         - kind: Service
           name: analyze-bot-site
