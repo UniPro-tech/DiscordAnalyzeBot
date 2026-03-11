@@ -17,7 +17,14 @@ class About(commands.Cog):
                 color=0x00FF00,
                 timestamp=discord.utils.utcnow(),
             )
-            embed.set_author(name="Analyzer Bot", icon_url=self.bot.user.avatar.url)
+            embed.set_author(
+                name="Analyzer Bot",
+                icon_url=(
+                    self.bot.user.avatar.url
+                    if self.bot.user.avatar is not None
+                    else "https://cdn.discordapp.com/embed/avatars/4.png"
+                ),
+            )
             embed.add_field(
                 name="開発元",
                 value="[デジタル創作サークルUniProject](https://uniproject.jp/)",
