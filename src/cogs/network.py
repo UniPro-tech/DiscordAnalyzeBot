@@ -118,12 +118,12 @@ class ConversationNetwork(commands.Cog):
             if reply_to and reply_to in msg_map:
                 other = msg_map[reply_to]["user_id"]
                 if author != other:
-                    edges[(author, other)] += 1
+                    edges[tuple(sorted([author, other]))] += 1
 
             # mention
             for mentioned in msg.get("mentions", []):
                 if mentioned != author:
-                    edges[(author, mentioned)] += 1
+                    edges[tuple(sorted([author, mentioned]))] += 1
 
         if not edges:
             embed = embed_helper.create_warning_embed(
