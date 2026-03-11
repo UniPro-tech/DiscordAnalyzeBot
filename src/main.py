@@ -143,7 +143,7 @@ Analyze Botは、ユーザーのプライバシーを尊重し、データの安
 ### プライバシーに関する注意点
 Analyze Botは、サーバー内のテキストチャンネルのメッセージを収集しますが、収集されたデータは30日間保存され、その後自動的に削除されます。
 また、ユーザーは`/optout`コマンドを使用して、統計データからご自身のメッセージをオプトアウトすることができます。オプトアウトされたユーザーのメッセージは、分析の対象外となります。
-詳しくは、[プライバシー・ポリシー](https://analyze-bot.uniproject.jp/privacy )をご覧ください。
+詳しくは、[プライバシー・ポリシー](https://analyze-bot.uniproject.jp/privacy )および[利用規約](https://analyze-bot.uniproject.jp/legal/terms )をご覧ください。
 ```
 """
         await owner.send(message)
