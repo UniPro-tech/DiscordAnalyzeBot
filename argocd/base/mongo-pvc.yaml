@@ -7,7 +7,7 @@ metadata:
 spec:
   accessModes:
     - ReadWriteMany
-  storageClassName: "nfs-retain"
+  storageClassName: "nfs-csi"
   resources:
     requests:
       storage: 10Gi
@@ -24,4 +24,4 @@ spec:
   resources:
     requests:
       storage: 10Gi
-  storageClassName: "nfs-retain"
+  storageClassName: "nfs-csi"
