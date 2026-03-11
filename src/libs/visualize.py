@@ -181,11 +181,16 @@ def generate_sample_conversation_network_view(
 
 def generate_conversation_network(edges: dict) -> io.BytesIO:
 
+    if not edges:
+        raise ValueError("会話エッジがありません")
+
     font_path = resolve_font_path()
     font_prop = None
 
-    if font_path:
-        font_prop = fm.FontProperties(fname=font_path, size=64)
+    if font_path is None:
+        raise RuntimeError("ネットワーク図描画用フォントが見つかりません")
+
+    font_prop = fm.FontProperties(fname=font_path, size=64)
 
     G = nx.Graph()
 
@@ -210,6 +215,9 @@ def generate_conversation_network(edges: dict) -> io.BytesIO:
             node_index += 1
 
         G.add_edge(node_map[a], node_map[b], weight=weight)
+
+    if G.number_of_edges() == 0:
+        raise ValueError("表示条件を満たす会話エッジがありません")
 
     pos = nx.kamada_kawai_layout(G)
 

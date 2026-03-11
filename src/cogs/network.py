@@ -11,6 +11,8 @@ from libs.embed import EmbedHelper
 
 class ConversationNetwork(commands.Cog):
 
+    MAX_MESSAGE_COUNT = 5000
+
     network_group = app_commands.Group(
         name="network",
         description="会話ネットワーク分析",
@@ -40,7 +42,15 @@ class ConversationNetwork(commands.Cog):
         if interaction.guild_id is None:
             embed = embed_helper.create_error_embed(
                 title="エラー",
-                description="このコマンドはサーバー内で使ってね。",
+                description="このコマンドはサーバー内で使ってください。",
+            )
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+            return
+
+        if interaction.guild is None:
+            embed = embed_helper.create_error_embed(
+                title="エラー",
+                description="サーバー情報を取得できませんでした。時間をおいて再実行してください。",
             )
             await interaction.response.send_message(embed=embed, ephemeral=True)
             return
@@ -49,19 +59,30 @@ class ConversationNetwork(commands.Cog):
         period_filter = {}
         if period:
             try:
+                period_days = int(period)
+                if period_days <= 0:
+                    raise ValueError
                 period_filter = {
                     "timestamp": {
                         "$gte": (
-                            discord.utils.utcnow() - timedelta(days=int(period))
+                            discord.utils.utcnow() - timedelta(days=period_days)
                         ).isoformat()
                     }
                 }
             except ValueError:
                 embed = embed_helper.create_error_embed(
                     title="エラー",
-                    description="期間は数値で指定してください。",
+                    description="期間は1以上の数値で指定してください。",
                 )
                 await interaction.response.send_message(embed=embed, ephemeral=True)
+                return
+            except Exception as e:
+                embed = embed_helper.create_error_embed(
+                    title="エラー",
+                    description="期間の処理中にエラーが発生しました。",
+                )
+                await interaction.response.send_message(embed=embed, ephemeral=True)
+                print(f"Error processing network period: {e}")
                 return
 
         user_filter = {}
@@ -82,10 +103,16 @@ class ConversationNetwork(commands.Cog):
                         **period_filter,
                         **user_filter,
                         **channel_filter,
-                    }
+                    },
+                    {
+                        "message_id": 1,
+                        "user_id": 1,
+                        "reply_to": 1,
+                        "mentions": 1,
+                    },
                 )
                 .sort("timestamp", -1)
-                .limit(5000)
+                .limit(self.MAX_MESSAGE_COUNT)
             )
         except Exception as e:
             embed = embed_helper.create_error_embed(
@@ -105,23 +132,65 @@ class ConversationNetwork(commands.Cog):
             return
 
         # message map
-        msg_map = {doc["message_id"]: doc for doc in docs}
+        valid_docs = []
+        invalid_doc_count = 0
+
+        for doc in docs:
+            message_id = doc.get("message_id")
+            author_id = doc.get("user_id")
+
+            if message_id is None or author_id is None:
+                invalid_doc_count += 1
+                continue
+
+            valid_docs.append(
+                {
+                    "message_id": str(message_id),
+                    "user_id": str(author_id),
+                    "reply_to": (
+                        str(doc["reply_to"])
+                        if doc.get("reply_to") is not None
+                        else None
+                    ),
+                    "mentions": [
+                        str(mentioned)
+                        for mentioned in doc.get("mentions", [])
+                        if mentioned is not None
+                    ],
+                }
+            )
+
+        if not valid_docs:
+            embed = embed_helper.create_warning_embed(
+                title="データ不足",
+                description="解析に使えるメッセージがありませんでした。",
+            )
+            await interaction.followup.send(embed=embed)
+            return
+
+        msg_map = {doc["message_id"]: doc for doc in valid_docs}
 
         edges = defaultdict(int)
 
-        for msg in docs:
+        for msg in valid_docs:
 
             author = msg.get("user_id")
+            if author is None:
+                continue
 
             # reply
             reply_to = msg.get("reply_to")
             if reply_to and reply_to in msg_map:
-                other = msg_map[reply_to]["user_id"]
+                other = msg_map[reply_to].get("user_id")
                 if author != other:
                     edges[tuple(sorted([author, other]))] += 1
 
             # mention
-            for mentioned in msg.get("mentions", []):
+            mentions = msg.get("mentions", [])
+            if not isinstance(mentions, list):
+                continue
+
+            for mentioned in mentions:
                 if mentioned != author:
                     edges[tuple(sorted([author, mentioned]))] += 1
 
@@ -138,19 +207,47 @@ class ConversationNetwork(commands.Cog):
 
         for a, b in edges.keys():
             if a not in user_map:
-                member = interaction.guild.get_member(int(a))
-                user_map[a] = member.display_name if member else a
+                try:
+                    member = interaction.guild.get_member(int(a))
+                    user_map[a] = member.display_name if member else a
+                except (TypeError, ValueError):
+                    user_map[a] = a
 
             if b not in user_map:
-                member = interaction.guild.get_member(int(b))
-                user_map[b] = member.display_name if member else b
+                try:
+                    member = interaction.guild.get_member(int(b))
+                    user_map[b] = member.display_name if member else b
+                except (TypeError, ValueError):
+                    user_map[b] = b
 
         named_edges = {
             (user_map[a], user_map[b]): count for (a, b), count in edges.items()
         }
 
+        if not named_edges:
+            embed = embed_helper.create_warning_embed(
+                title="会話不足",
+                description="ネットワーク図に変換できるデータがありませんでした。",
+            )
+            await interaction.followup.send(embed=embed)
+            return
+
         try:
             image_buffer = generate_conversation_network(named_edges)
+        except ValueError:
+            embed = embed_helper.create_warning_embed(
+                title="会話不足",
+                description="表示条件を満たすつながりが少ないため、ネットワーク図を生成できませんでした。",
+            )
+            await interaction.followup.send(embed=embed)
+            return
+        except RuntimeError:
+            embed = embed_helper.create_error_embed(
+                title="内部エラー",
+                description="描画に必要なフォントが見つからないため、生成できませんでした。",
+            )
+            await interaction.followup.send(embed=embed)
+            return
         except Exception as e:
             embed = embed_helper.create_error_embed(
                 title="生成エラー",
@@ -162,7 +259,14 @@ class ConversationNetwork(commands.Cog):
 
         embed = embed_helper.create_success_embed(
             title="会話ネットワーク生成",
-            description=f"{len(docs)}件のメッセージを解析しました",
+            description=(
+                f"{len(valid_docs)}件のメッセージを解析しました"
+                + (
+                    f"\n不正データ {invalid_doc_count}件 は自動でスキップしました"
+                    if invalid_doc_count
+                    else ""
+                )
+            ),
             binary_data=image_buffer.getvalue(),
             binary_filename="network.png",
         )
