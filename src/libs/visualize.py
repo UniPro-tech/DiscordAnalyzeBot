@@ -163,6 +163,22 @@ def generate_wordcloud_from_file(
         f.write(image_buffer.getvalue())
 
 
+def generate_sample_conversation_network_view(
+    output_file_path: str = "sample_network.png",
+) -> None:
+    edges = {
+        ("Alice", "Bob"): 5,
+        ("Alice", "Charlie"): 3,
+        ("Bob", "Charlie"): 2,
+        ("Bob", "David"): 4,
+        ("Charlie", "David"): 1,
+        ("Alice", "David"): 2,
+        ("Eve", "Alice"): 1,
+    }
+    with open(output_file_path, "wb") as f:
+        f.write(generate_conversation_network(edges).getvalue())
+
+
 def generate_conversation_network(edges: dict) -> io.BytesIO:
 
     font_path = resolve_font_path()
@@ -234,4 +250,5 @@ def generate_conversation_network(edges: dict) -> io.BytesIO:
 
 
 if __name__ == "__main__":
-    generate_wordcloud_from_file("sample.txt")
+    # generate_wordcloud_from_file("sample.txt")
+    generate_sample_conversation_network_view()
