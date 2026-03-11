@@ -3,7 +3,7 @@ import os
 import sys
 import asyncio
 from pymongo import MongoClient
-from discord.ext import commands
+from discord.ext import commands, tasks
 import re
 
 # Add src directory to sys.path for imports
@@ -28,6 +28,9 @@ bot = AnalyzerBot()
 # MongoDB
 client_db = MongoClient(DB_DSN)
 bot.db = client_db["discord_analyzer"]
+
+STATUS_ROTATION_SECONDS = 30
+status_index = 0
 
 
 def setup_db():
@@ -65,8 +68,43 @@ def setup_db():
 
 @bot.event
 async def on_ready():
+    if not rotate_status.is_running():
+        rotate_status.start()
     await bot.tree.sync()
     print(f"Logged in as {bot.user}")
+
+
+async def _get_status_messages():
+    def collect_counts():
+        messages_count = bot.db.messages.estimated_document_count()
+        collected_user_count = len(bot.db.messages.distinct("user_id"))
+        return messages_count, collected_user_count
+
+    messages_count, collected_user_count = await asyncio.to_thread(collect_counts)
+    guild_count = len(bot.guilds)
+
+    return [
+        f"{messages_count:,} 件のメッセージを収集中",
+        f"{guild_count:,} サーバーに参加中",
+        f"{collected_user_count:,} ユーザー分を収集中",
+    ]
+
+
+@tasks.loop(seconds=STATUS_ROTATION_SECONDS)
+async def rotate_status():
+    global status_index
+    statuses = await _get_status_messages()
+    if not statuses:
+        return
+
+    current_status = statuses[status_index % len(statuses)]
+    status_index += 1
+    await bot.change_presence(activity=discord.Game(name=current_status))
+
+
+@rotate_status.before_loop
+async def before_rotate_status():
+    await bot.wait_until_ready()
 
 
 @bot.event
