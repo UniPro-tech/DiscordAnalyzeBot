@@ -247,6 +247,7 @@ async def main():
     await bot.load_extension("cogs.wordcloud")
     await bot.load_extension("cogs.about")
     await bot.load_extension("cogs.optout")
+    await bot.load_extension("cogs.network")
 
     async with bot:
         await bot.start(TOKEN)
