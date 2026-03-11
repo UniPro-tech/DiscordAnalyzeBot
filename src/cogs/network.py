@@ -59,7 +59,7 @@ class ConversationNetwork(commands.Cog):
             except ValueError:
                 embed = embed_helper.create_error_embed(
                     title="エラー",
-                    description="期間は数値で指定してね。",
+                    description="期間は数値で指定してください。",
                 )
                 await interaction.response.send_message(embed=embed, ephemeral=True)
                 return
