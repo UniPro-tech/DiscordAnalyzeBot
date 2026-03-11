@@ -4,6 +4,7 @@ import sys
 import asyncio
 from pymongo import MongoClient
 from discord.ext import commands
+import re
 
 # Add src directory to sys.path for imports
 sys.path.insert(0, os.path.dirname(__file__))
@@ -39,6 +40,7 @@ def setup_db():
         unique=True,
         partialFilterExpression={"message_id": {"$exists": True}},
     )
+    bot.db.messages.create_index("reply_to")
 
     # TTL Index: 30日後に自動的に削除
     bot.db.messages.create_index("timestamp", expireAfterSeconds=30 * 24 * 60 * 60)
@@ -89,6 +91,13 @@ async def on_message(message):
 
     roles = message.author.roles
 
+    reply_to = None
+    if message.reference:
+        reply_to = str(message.reference.message_id)
+
+    emoji_pattern = r"<a?:\w+:\d+>"
+    emojis = re.findall(emoji_pattern, message.content)
+
     data = {
         "message_id": str(message.id),
         "guild_id": str(message.guild.id),
@@ -100,6 +109,12 @@ async def on_message(message):
         "content": message.content,
         "timestamp": message.created_at.isoformat(),
         "role_ids": [str(role.id) for role in roles] if roles else [],
+        "reply_to": reply_to,
+        "mentions": [str(user.id) for user in message.mentions],
+        "attachments": [a.url for a in message.attachments],
+        "length": len(message.content),
+        "emoji_count": len(emojis),
+        "url_count": len(message.content.split("http")),
     }
 
     bot.db.messages.insert_one(data)
