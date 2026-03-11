@@ -4,7 +4,7 @@ from discord.ext import commands, tasks
 from datetime import datetime, timedelta
 from typing import Optional
 from zoneinfo import ZoneInfo
-from libs.visualize import generate_wordcloud_image
+from libs.visualize import generate_wordcloud_image, strip_decoration
 from libs.embed import EmbedHelper
 
 
@@ -125,7 +125,7 @@ class WordCloud(commands.Cog):
             await interaction.followup.send(embed=embed)
             return
 
-        raw_text = " ".join(doc.get("content", "") for doc in docs)
+        raw_text = " ".join(strip_decoration(doc.get("content", "")) for doc in docs)
 
         try:
             image_buffer = generate_wordcloud_image(raw_text)
@@ -482,7 +482,9 @@ class WordCloud(commands.Cog):
                 self._update_last_executed(guild_id, channel_id, frequency)
                 return
 
-            raw_text = " ".join(doc.get("content", "") for doc in docs)
+            raw_text = " ".join(
+                strip_decoration(doc.get("content", "")) for doc in docs
+            )
 
             try:
                 image_buffer = generate_wordcloud_image(raw_text)

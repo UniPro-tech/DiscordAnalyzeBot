@@ -75,6 +75,32 @@ def normalize_text(text: str) -> str:
     return unicodedata.normalize("NFKC", normalized)
 
 
+def strip_decoration(text: str) -> str:
+    """テキスト中のコードブロック（```...```, ~~~...~~~）とインラインコード（`...`）、取り消し線（~~...~~）、スポイラー（||...||）を除去して返す。
+
+    意図: ワードクラウド生成時にコードのトークンがノイズになるため除去する。
+    """
+    if not text:
+        return ""
+
+    # フェンス付きコードブロック（```...``` や ~~~...~~~）を削除
+    text = re.sub(r"```.*?```", " ", text, flags=re.S)
+    text = re.sub(r"~~~.*?~~~", " ", text, flags=re.S)
+
+    # インラインコード `...` を削除
+    text = re.sub(r"`[^`]*`", " ", text)
+
+    # 取り消し線 ~~...~~ を削除
+    text = re.sub(r"~~[^~]*~~", " ", text)
+
+    # スポイラー ||...|| を削除
+    text = re.sub(r"\|\|[^|]*\|\|", " ", text)
+
+    # 複数空白を単一空白に
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
+
+
 def extract_nouns(text: str, tokenizer: Tokenizer | None = None) -> str:
     t = tokenizer or Tokenizer()
     words_list: list[str] = []

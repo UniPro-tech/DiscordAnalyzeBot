@@ -34,6 +34,11 @@ def setup_db():
     bot.db.messages.create_index("user_id")
     bot.db.messages.create_index("channel_id")
     bot.db.messages.create_index("guild_id")
+    bot.db.messages.create_index(
+        "message_id",
+        unique=True,
+        partialFilterExpression={"message_id": {"$exists": True}},
+    )
 
     # TTL Index: 30日後に自動的に削除
     bot.db.messages.create_index("timestamp", expireAfterSeconds=30 * 24 * 60 * 60)
@@ -85,6 +90,7 @@ async def on_message(message):
     roles = message.author.roles
 
     data = {
+        "message_id": str(message.id),
         "guild_id": str(message.guild.id),
         "guild_name": message.guild.name,
         "user_id": str(message.author.id),
@@ -99,6 +105,69 @@ async def on_message(message):
     bot.db.messages.insert_one(data)
 
     await bot.process_commands(message)
+
+
+def _delete_message_records(message_ids):
+    normalized_ids = [str(message_id) for message_id in message_ids]
+    result = bot.db.messages.delete_many({"message_id": {"$in": normalized_ids}})
+    return result.deleted_count
+
+
+@bot.event
+async def on_guild_remove(guild):
+    print(f"Left guild: {guild.name} (ID: {guild.id})")
+    # サーバーから退出した際に、そのサーバーのメッセージデータを削除する
+    result = bot.db.messages.delete_many({"guild_id": str(guild.id)})
+    print(
+        f"Deleted {result.deleted_count} messages from the database for guild {guild.name}"
+    )
+    # 設定の削除
+    settings_result = bot.db.guild_settings.delete_many({"guild_id": str(guild.id)})
+    print(
+        f"Deleted {settings_result.deleted_count} guild settings from the database for guild {guild.name}"
+    )
+    channel_settings_result = bot.db.channel_settings.delete_many(
+        {"guild_id": str(guild.id)}
+    )
+    print(
+        f"Deleted {channel_settings_result.deleted_count} channel settings from the database for guild {guild.name}"
+    )
+
+
+@bot.event
+async def on_raw_message_delete(payload):
+    """
+    メッセージが削除された際のイベントハンドラー
+    """
+    if payload.guild_id is None:
+        return
+
+    deleted_count = _delete_message_records([payload.message_id])
+    if deleted_count > 0:
+        guild = bot.get_guild(payload.guild_id)
+        channel = bot.get_channel(payload.channel_id)
+        guild_name = guild.name if guild is not None else "Unknown Guild"
+        channel_name = channel.name if channel is not None else "Unknown Channel"
+        print(
+            f"Deleted {deleted_count} message records from the database for deleted message in guild '{guild_name}' (ID: {payload.guild_id}), channel '{channel_name}' (ID: {payload.channel_id})"
+        )
+
+
+@bot.event
+async def on_raw_bulk_message_delete(payload):
+    """
+    複数メッセージが一度に削除された際のイベントハンドラー
+    """
+    if payload.guild_id is None:
+        return
+
+    deleted_count = _delete_message_records(payload.message_ids)
+    if deleted_count > 0:
+        guild = bot.get_guild(payload.guild_id)
+        guild_name = guild.name if guild is not None else "Unknown Guild"
+        print(
+            f"Deleted {deleted_count} message records from the database for bulk deleted messages in guild '{guild_name}' (ID: {payload.guild_id})"
+        )
 
 
 @bot.event
