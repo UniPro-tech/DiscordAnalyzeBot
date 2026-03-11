@@ -34,6 +34,8 @@ def setup_db():
     bot.db.messages.create_index("user_id")
     bot.db.messages.create_index("channel_id")
     bot.db.messages.create_index("guild_id")
+    bot.db.messages.create_index("timestamp")
+    bot.db.messages.create_index("message_id", unique=True)
 
     # TTL Index: 30日後に自動的に削除
     bot.db.messages.create_index("timestamp", expireAfterSeconds=30 * 24 * 60 * 60)
@@ -110,6 +112,17 @@ async def on_guild_remove(guild):
     print(
         f"Deleted {result.deleted_count} messages from the database for guild {guild.name}"
     )
+    # 設定の削除
+    settings_result = bot.db.guild_settings.delete_many({"guild_id": str(guild.id)})
+    print(
+        f"Deleted {settings_result.deleted_count} guild settings from the database for guild {guild.name}"
+    )
+    channel_settings_result = bot.db.channel_settings.delete_many(
+        {"guild_id": str(guild.id)}
+    )
+    print(
+        f"Deleted {channel_settings_result.deleted_count} channel settings from the database for guild {guild.name}"
+    )
 
 
 @bot.event
@@ -128,7 +141,7 @@ async def on_message_delete(message):
     )
     if result.deleted_count > 0:
         print(
-            f"Deleted message from database: {message.content} (Guild: {message.guild.name}, Channel: {message.channel.name})"
+            f"Deleted message {message.id} from database (Guild: {message.guild.name}, Channel: {message.channel.name})"
         )
 
 
