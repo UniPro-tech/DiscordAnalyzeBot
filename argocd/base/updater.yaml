@@ -12,3 +12,11 @@ spec:
           imageName: "registry.uniproject.jp/official/analyze-bot:x.x.x"
           commonUpdateSettings:
             updateStrategy: "semver"
+        - alias: "mongo"
+          imageName: "mongo:x.x.x"
+          commonUpdateSettings:
+            updateStrategy: "semver"
+        - alias: "analyze-bot-site"
+          imageName: "registry.uniproject.jp/official/analyze-bot-site:x.x.x"
+          commonUpdateSettings:
+            updateStrategy: "semver"

@@ -1,0 +1,42 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: analyze-bot-site
+spec:
+  selector:
+    matchLabels:
+      app: analyze-bot-site
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: analyze-bot-site
+    spec:
+      containers:
+        - name: app
+          image: registry.uniproject.jp/official/analyze-bot-site:0.2.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 3000
+              name: default-port
+          resources:
+            requests:
+              cpu: 500m # 必要最低限の0.5CPUを確保
+              memory: 1Gi # 必要最低限の1GiBを確保
+            limits:
+              cpu: 1000m # 最大1CPUまで使用可能
+              memory: 2Gi # 最大2GiBまで使用可能
+          readinessProbe:
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            httpGet:
+              path: /
+              port: default-port
+              httpHeaders:
+                - name: X-k8s-Header
+                  value: readiness
+          env:
+            - name: TZ
+              value: Asia/Tokyo
+      imagePullSecrets:
+        - name: internal-harbor

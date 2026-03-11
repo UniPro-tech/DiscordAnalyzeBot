@@ -1,0 +1,39 @@
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: analyze-bot-site
+spec:
+  entryPoints:
+    - websecure
+    - web
+  routes:
+    - kind: Rule
+      match: Host(`analyze-bot.uniproject.jp`) && PathPrefix(`/`)
+      observability:
+        accessLogs: true
+        metrics: true
+        tracing: true
+      priority: 1
+      middlewares:
+        - name: redirect-to-www
+          namespace: analyze-bot-site
+      services:
+        - kind: Service
+          name: analyze-bot-site
+          passHostHeader: true
+          port: 80
+          responseForwarding:
+            flushInterval: 1ms
+          scheme: http
+          sticky:
+            cookie:
+              httpOnly: true
+              name: cookie
+              secure: true
+          strategy: wrr
+          weight: 10
+  tls:
+    certResolver: cf-prod
+    domains:
+      - main: analyze-bot.uniproject.jp
