@@ -188,6 +188,15 @@ class WordCloud(commands.Cog):
             await interaction.response.send_message(embed=embed, ephemeral=True)
             return
 
+        # チャンネル管理権限チェック
+        if interaction.permissions.manage_channels is False :
+            embed = embed_helper.create_error_embed(
+                title="エラー",
+                description="このコマンドはチャンネル管理権限が必要です。",
+            )
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+            return
+
         parsed_time = self._parse_schedule_time(time)
         if parsed_time is None:
             embed = embed_helper.create_error_embed(
@@ -255,6 +264,15 @@ class WordCloud(commands.Cog):
             embed = embed_helper.create_error_embed(
                 title="エラー",
                 description="このコマンドはサーバー内でご利用ください。",
+            )
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+            return
+
+        # チャンネル管理権限チェック
+        if interaction.permissions.manage_channels is False :
+            embed = embed_helper.create_error_embed(
+                title="エラー",
+                description="このコマンドはチャンネル管理権限が必要です。",
             )
             await interaction.response.send_message(embed=embed, ephemeral=True)
             return
@@ -346,6 +364,15 @@ class WordCloud(commands.Cog):
             embed = embed_helper.create_error_embed(
                 title="エラー",
                 description="このコマンドはサーバー内でご利用ください。",
+            )
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+            return
+
+        # チャンネル管理権限チェック
+        if interaction.permissions.manage_channels is False :
+            embed = embed_helper.create_error_embed(
+                title="エラー",
+                description="このコマンドはチャンネル管理権限が必要です。",
             )
             await interaction.response.send_message(embed=embed, ephemeral=True)
             return
