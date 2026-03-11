@@ -185,7 +185,7 @@ def generate_conversation_network(edges: dict) -> io.BytesIO:
     font_prop = None
 
     if font_path:
-        font_prop = fm.FontProperties(fname=font_path)
+        font_prop = fm.FontProperties(fname=font_path, size=64)
 
     G = nx.Graph()
 
@@ -230,7 +230,7 @@ def generate_conversation_network(edges: dict) -> io.BytesIO:
         G,
         pos,
         labels,
-        font_size=30,
+        font_size=128,
     )
 
     # 日本語フォント適用
