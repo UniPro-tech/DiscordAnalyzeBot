@@ -107,6 +107,11 @@ async def on_message(message):
     await bot.process_commands(message)
 
 
+def _delete_message_records(message_ids: list[str]):
+    result = bot.db.messages.delete_many({"message_id": {"$in": message_ids}})
+    return result.deleted_count
+
+
 @bot.event
 async def on_guild_remove(guild):
     print(f"Left guild: {guild.name} (ID: {guild.id})")
@@ -129,22 +134,35 @@ async def on_guild_remove(guild):
 
 
 @bot.event
-async def on_raw_message_delete(message):
+async def on_raw_message_delete(payload):
     """
     メッセージが削除された際のイベントハンドラー
     """
-    if message.guild is None:
+    if payload.guild_id is None:
         return
 
-    # メッセージIDとチャンネルIDを元にデータベースから該当するメッセージを削除
-    result = bot.db.messages.delete_one(
-        {
-            "message_id": str(message.id),
-        }
-    )
-    if result.deleted_count > 0:
+    deleted_count = _delete_message_records([payload.message_id])
+    if deleted_count > 0:
+        guild = bot.get_guild(payload.guild_id)
+        channel = bot.get_channel(payload.channel_id)
         print(
-            f"Deleted message {message.id} from database (Guild: {message.guild.name}, Channel: {message.channel.name})"
+            f"Deleted {deleted_count} message records from the database for deleted message in guild '{guild.name}' (ID: {payload.guild_id}), channel '{channel.name}' (ID: {payload.channel_id})"
+        )
+
+
+@bot.event
+async def on_raw_bulk_message_delete(payload):
+    """
+    複数メッセージが一度に削除された際のイベントハンドラー
+    """
+    if payload.guild_id is None:
+        return
+
+    deleted_count = _delete_message_records(list(payload.message_ids))
+    if deleted_count > 0:
+        guild = bot.get_guild(payload.guild_id)
+        print(
+            f"Deleted {deleted_count} message records from the database for bulk deleted messages in guild '{guild.name}' (ID: {payload.guild_id})"
         )
 
 
