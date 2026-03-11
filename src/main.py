@@ -85,6 +85,7 @@ async def on_message(message):
     roles = message.author.roles
 
     data = {
+        "message_id": str(message.id),
         "guild_id": str(message.guild.id),
         "guild_name": message.guild.name,
         "user_id": str(message.author.id),
@@ -99,6 +100,36 @@ async def on_message(message):
     bot.db.messages.insert_one(data)
 
     await bot.process_commands(message)
+
+
+@bot.event
+async def on_guild_remove(guild):
+    print(f"Left guild: {guild.name} (ID: {guild.id})")
+    # サーバーから退出した際に、そのサーバーのメッセージデータを削除する
+    result = bot.db.messages.delete_many({"guild_id": str(guild.id)})
+    print(
+        f"Deleted {result.deleted_count} messages from the database for guild {guild.name}"
+    )
+
+
+@bot.event
+async def on_message_delete(message):
+    """
+    メッセージが削除された際のイベントハンドラー
+    """
+    if message.guild is None:
+        return
+
+    # メッセージIDとチャンネルIDを元にデータベースから該当するメッセージを削除
+    result = bot.db.messages.delete_one(
+        {
+            "message_id": str(message.id),
+        }
+    )
+    if result.deleted_count > 0:
+        print(
+            f"Deleted message from database: {message.content} (Guild: {message.guild.name}, Channel: {message.channel.name})"
+        )
 
 
 @bot.event
