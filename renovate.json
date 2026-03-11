@@ -1,6 +1,4 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": [
-    "local>UniPro-tech/renovate-config"
-  ]
+  "extends": ["github>unipro-tech/renovate-config//default"]
 }
