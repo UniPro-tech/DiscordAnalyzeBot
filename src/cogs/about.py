@@ -19,11 +19,7 @@ class About(commands.Cog):
             )
             embed.set_author(
                 name="Analyzer Bot",
-                icon_url=(
-                    self.bot.user.avatar.url
-                    if self.bot.user.avatar is not None
-                    else "https://cdn.discordapp.com/embed/avatars/4.png"
-                ),
+                icon_url=(self.bot.user.display_avatar.url),
             )
             embed.add_field(
                 name="開発元",
