@@ -8,3 +8,7 @@ resources:
   - updater.yaml
   - secret.yaml
   - bot-deployment.yaml
+  - hp-deployment.yaml
+  - hp-service.yaml
+  - hp-ingress.yaml
+  - hp-hpa.yaml
