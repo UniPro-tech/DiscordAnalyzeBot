@@ -189,7 +189,7 @@ class WordCloud(commands.Cog):
             return
 
         # チャンネル管理権限チェック
-        if interaction.permissions.manage_channels is False :
+        if interaction.permissions.manage_channels is False:
             embed = embed_helper.create_error_embed(
                 title="エラー",
                 description="このコマンドはチャンネル管理権限が必要です。",
@@ -269,7 +269,7 @@ class WordCloud(commands.Cog):
             return
 
         # チャンネル管理権限チェック
-        if interaction.permissions.manage_channels is False :
+        if interaction.permissions.manage_channels is False:
             embed = embed_helper.create_error_embed(
                 title="エラー",
                 description="このコマンドはチャンネル管理権限が必要です。",
@@ -369,7 +369,7 @@ class WordCloud(commands.Cog):
             return
 
         # チャンネル管理権限チェック
-        if interaction.permissions.manage_channels is False :
+        if interaction.permissions.manage_channels is False:
             embed = embed_helper.create_error_embed(
                 title="エラー",
                 description="このコマンドはチャンネル管理権限が必要です。",
