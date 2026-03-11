@@ -34,7 +34,11 @@ def setup_db():
     bot.db.messages.create_index("user_id")
     bot.db.messages.create_index("channel_id")
     bot.db.messages.create_index("guild_id")
-    bot.db.messages.create_index("message_id", unique=True)
+    bot.db.messages.create_index(
+        "message_id",
+        unique=True,
+        partialFilterExpression={"message_id": {"$exists": True}},
+    )
 
     # TTL Index: 30日後に自動的に削除
     bot.db.messages.create_index("timestamp", expireAfterSeconds=30 * 24 * 60 * 60)
@@ -125,7 +129,7 @@ async def on_guild_remove(guild):
 
 
 @bot.event
-async def on_message_delete(message):
+async def on_raw_message_delete(message):
     """
     メッセージが削除された際のイベントハンドラー
     """
