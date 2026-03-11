@@ -107,8 +107,9 @@ async def on_message(message):
     await bot.process_commands(message)
 
 
-def _delete_message_records(message_ids: list[str]):
-    result = bot.db.messages.delete_many({"message_id": {"$in": message_ids}})
+def _delete_message_records(message_ids):
+    normalized_ids = [str(message_id) for message_id in message_ids]
+    result = bot.db.messages.delete_many({"message_id": {"$in": normalized_ids}})
     return result.deleted_count
 
 
@@ -145,8 +146,10 @@ async def on_raw_message_delete(payload):
     if deleted_count > 0:
         guild = bot.get_guild(payload.guild_id)
         channel = bot.get_channel(payload.channel_id)
+        guild_name = guild.name if guild is not None else "Unknown Guild"
+        channel_name = channel.name if channel is not None else "Unknown Channel"
         print(
-            f"Deleted {deleted_count} message records from the database for deleted message in guild '{guild.name}' (ID: {payload.guild_id}), channel '{channel.name}' (ID: {payload.channel_id})"
+            f"Deleted {deleted_count} message records from the database for deleted message in guild '{guild_name}' (ID: {payload.guild_id}), channel '{channel_name}' (ID: {payload.channel_id})"
         )
 
 
@@ -158,11 +161,12 @@ async def on_raw_bulk_message_delete(payload):
     if payload.guild_id is None:
         return
 
-    deleted_count = _delete_message_records(list(payload.message_ids))
+    deleted_count = _delete_message_records(payload.message_ids)
     if deleted_count > 0:
         guild = bot.get_guild(payload.guild_id)
+        guild_name = guild.name if guild is not None else "Unknown Guild"
         print(
-            f"Deleted {deleted_count} message records from the database for bulk deleted messages in guild '{guild.name}' (ID: {payload.guild_id})"
+            f"Deleted {deleted_count} message records from the database for bulk deleted messages in guild '{guild_name}' (ID: {payload.guild_id})"
         )
 
 
