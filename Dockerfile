@@ -1,20 +1,35 @@
-FROM ghcr.io/astral-sh/uv:debian-slim
+FROM ghcr.io/astral-sh/uv:python3.14-trixie-slim
 
 WORKDIR /app
 
-RUN apt update
-RUN apt install -y ca-certificates
+# 1. ビルドに必要なツール一式をインストール
+# gcc と libc6-dev がないと、Rustコンパイラがあってもビルドに失敗します
+RUN apt-get update && apt-get install -y --no-install-recommends \
+  ca-certificates \
+  gcc \
+  libc6-dev \
+  rustc \
+  cargo \
+  && rm -rf /var/lib/apt/lists/*
 
-# 1. Pythonの出力をリアルタイムで表示させる設定（重要）
+# For Debian/Ubuntu based images
+RUN apt-get update && apt-get install -y \
+  build-essential \
+  curl \
+  && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+# 2. 環境設定
 ENV PYTHONUNBUFFERED=1
-# 2. .pycファイルを作成しない設定（コンテナを軽量に保つ）
 ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 
 
+# 3. 依存関係のインストール
 COPY pyproject.toml .
 COPY uv.lock* ./
 
-# Disable development dependencies
 ENV UV_NO_DEV=1
+# --locked を使いつつ同期
 RUN uv sync --locked
 
 COPY . .
