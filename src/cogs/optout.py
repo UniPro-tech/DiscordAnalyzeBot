@@ -3,6 +3,7 @@ import asyncio
 from discord.ext import commands
 from discord import app_commands
 from libs.embed import EmbedHelper
+from libs.message_store import delete_messages_by_query
 
 
 class Optout(commands.Cog):
@@ -16,10 +17,13 @@ class Optout(commands.Cog):
 
     async def _delete_messages_background(self, query: dict, scope: str):
         try:
-            # pymongo is synchronous, so run in a thread to avoid blocking the event loop.
-            result = await asyncio.to_thread(self.bot.db.messages.delete_many, query)
+            deleted_count = await asyncio.to_thread(
+                delete_messages_by_query,
+                self.bot.db,
+                query,
+            )
             print(
-                f"[Optout] Background recursive delete completed for {scope}, deleted={result.deleted_count}"
+                f"[Optout] Background recursive delete completed for {scope}, deleted={deleted_count}"
             )
         except Exception as e:
             print(f"[Optout] Background recursive delete failed for {scope}: {e}")

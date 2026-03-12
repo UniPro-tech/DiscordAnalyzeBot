@@ -1,11 +1,27 @@
+import asyncio
+from datetime import datetime
+from typing import Optional
+from zoneinfo import ZoneInfo
+
 import discord
 from discord import app_commands
 from discord.ext import commands, tasks
-from datetime import datetime, timedelta
-from typing import Optional
-from zoneinfo import ZoneInfo
-from libs.visualize import generate_wordcloud_image, strip_decoration
+
 from libs.embed import EmbedHelper
+from libs.wordcloud_service import (
+    build_wordcloud_source_text,
+    fetch_learning_documents,
+    fetch_wordcloud_documents,
+    generate_wordcloud_image,
+    get_frequency_label,
+    learn_from_text,
+    parse_period_days,
+    parse_schedule_time,
+    should_execute_schedule,
+    update_compounds,
+    update_last_executed,
+    update_last_learn_id,
+)
 
 
 class WordCloud(commands.Cog):
@@ -18,10 +34,85 @@ class WordCloud(commands.Cog):
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.check_scheduled_wordclouds.start()
+        self._startup_task_status_logged = False
+        self._startup_task_reporter: asyncio.Task | None = None
+        self._start_background_task(
+            self.check_scheduled_wordclouds,
+            "check_scheduled_wordclouds",
+            "1 minute",
+        )
+        self._start_background_task(
+            self.background_learn,
+            "background_learn",
+            "10 minutes",
+        )
+        self._start_background_task(
+            self.update_compounds_task,
+            "update_compounds_task",
+            "24 hours",
+        )
+        self._startup_task_reporter = asyncio.create_task(
+            self._log_background_task_status_on_ready()
+        )
+
+    async def cog_load(self) -> None:
+        """Update compounds when the cog loads."""
+        print("[WordCloud] Cog loaded. Updating compounds database...")
+        update_compounds(self.bot.db)
+        print("[WordCloud] Compounds database updated on startup.")
 
     def cog_unload(self):
         self.check_scheduled_wordclouds.cancel()
+        self.background_learn.cancel()
+        self.update_compounds_task.cancel()
+        if self._startup_task_reporter is not None:
+            self._startup_task_reporter.cancel()
+
+    def _start_background_task(
+        self,
+        task_loop: tasks.Loop,
+        task_name: str,
+        interval_label: str,
+    ) -> None:
+        if task_loop.is_running():
+            print(
+                f"[WordCloud] Background task '{task_name}' is already running ({interval_label})."
+            )
+            return
+
+        task_loop.start()
+        print(f"[WordCloud] Started background task '{task_name}' ({interval_label}).")
+
+    async def _log_background_task_status_on_ready(self) -> None:
+        await self.bot.wait_until_ready()
+
+        if self._startup_task_status_logged:
+            return
+
+        self._startup_task_status_logged = True
+        self._log_background_task_status()
+
+    def _log_background_task_status(self) -> None:
+        for task_name, interval_label, task_loop in (
+            (
+                "check_scheduled_wordclouds",
+                "1 minute",
+                self.check_scheduled_wordclouds,
+            ),
+            ("background_learn", "10 minutes", self.background_learn),
+            ("update_compounds_task", "24 hours", self.update_compounds_task),
+        ):
+            next_iteration = task_loop.next_iteration
+            next_iteration_text = "pending"
+
+            if next_iteration is not None:
+                next_iteration_text = next_iteration.astimezone(self.JST).isoformat()
+
+            print(
+                "[WordCloud] Background task status: "
+                f"name='{task_name}', interval='{interval_label}', "
+                f"running={task_loop.is_running()}, next_iteration={next_iteration_text}"
+            )
 
     @wordcloud_group.command(
         name="generate",
@@ -33,7 +124,7 @@ class WordCloud(commands.Cog):
         channel="特定のチャンネルのメッセージからワードクラウドを生成します（省略した場合は全チャンネルのメッセージから生成）",
         role="特定のロールを持つユーザーのメッセージからワードクラウドを生成します（省略した場合は全ユーザーのメッセージから生成）",
     )
-    async def wordcloud(
+    async def generate(
         self,
         interaction: discord.Interaction,
         period: Optional[str] = None,
@@ -50,71 +141,40 @@ class WordCloud(commands.Cog):
             await interaction.response.send_message(embed=embed, ephemeral=True)
             return
 
-        # periodを数値化してクエリに追加。指定がない場合はデータ保持期間(30日)を使用
-        period_filter = {}
-        if period is not None:
-            try:
-                period_filter = {
-                    "timestamp": {
-                        "$gte": (
-                            discord.utils.utcnow() - timedelta(days=int(period))
-                        ).isoformat()
-                    }
-                }
-            except ValueError:
-                embed = embed_helper.create_error_embed(
-                    title="エラー", description="期間は数値で指定してください。"
-                )
-                await interaction.response.send_message(embed=embed, ephemeral=True)
-                return
-            except Exception as e:
-                embed = embed_helper.create_error_embed(
-                    title="エラー", description="期間の処理中にエラーが発生しました"
-                )
-                await interaction.response.send_message(embed=embed, ephemeral=True)
-                print(f"Error processing period: {e}")
-                return
-
-        # userが指定された場合はクエリに追加
-        user_filter = {}
-        if user is not None:
-            user_filter = {"user_id": str(user.id)}
-
-        # channelが指定された場合はクエリに追加
-        channel_filter = {}
-        if channel is not None:
-            channel_filter = {"channel_id": str(channel.id)}
-
-        # roleが指定された場合はクエリに追加
-        role_filter = {}
-        if role is not None:
-            role_filter = {"role_ids": {"$in": [str(role.id)]}}
+        try:
+            period_days = parse_period_days(period)
+        except ValueError:
+            embed = embed_helper.create_error_embed(
+                title="エラー", description="期間は1以上の数値で指定してください。"
+            )
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+            return
+        except Exception as error:
+            embed = embed_helper.create_error_embed(
+                title="エラー", description="期間の処理中にエラーが発生しました"
+            )
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+            print(f"Error processing period: {error}")
+            return
 
         await interaction.response.defer(thinking=True)
 
         try:
-            docs = list(
-                self.bot.db.messages.find(
-                    {
-                        "guild_id": str(interaction.guild_id),
-                        "content": {"$type": "string", "$ne": ""},
-                        **period_filter,
-                        **user_filter,
-                        **channel_filter,
-                        **role_filter,
-                    },
-                    {"content": 1},
-                )
-                .sort("timestamp", -1)
-                .limit(3000)
+            docs = fetch_wordcloud_documents(
+                self.bot.db,
+                str(interaction.guild_id),
+                period_days=period_days,
+                user_id=str(user.id) if user is not None else None,
+                channel_id=str(channel.id) if channel is not None else None,
+                role_id=str(role.id) if role is not None else None,
             )
-        except Exception as e:
+        except Exception as error:
             embed = embed_helper.create_error_embed(
                 title="データベースエラー",
                 description="データベースクエリ中にエラーが発生しました",
             )
             await interaction.followup.send(embed=embed)
-            print(f"Database query error: {e}")
+            print(f"Database query error: {error}")
             return
 
         if not docs:
@@ -125,10 +185,10 @@ class WordCloud(commands.Cog):
             await interaction.followup.send(embed=embed)
             return
 
-        raw_text = " ".join(strip_decoration(doc.get("content", "")) for doc in docs)
+        raw_text = build_wordcloud_source_text(docs)
 
         try:
-            image_buffer = generate_wordcloud_image(raw_text)
+            image_buffer = generate_wordcloud_image(db=self.bot.db, text=raw_text)
         except ValueError:
             embed = embed_helper.create_warning_embed(
                 title="語彙不足",
@@ -197,7 +257,7 @@ class WordCloud(commands.Cog):
             await interaction.response.send_message(embed=embed, ephemeral=True)
             return
 
-        parsed_time = self._parse_schedule_time(time)
+        parsed_time = parse_schedule_time(time)
         if parsed_time is None:
             embed = embed_helper.create_error_embed(
                 title="時刻形式エラー",
@@ -427,7 +487,7 @@ class WordCloud(commands.Cog):
             schedule_time = setting.get("schedule_time", "09:00")
             last_executed = setting.get("last_executed")
 
-            parsed_time = self._parse_schedule_time(schedule_time)
+            parsed_time = parse_schedule_time(schedule_time)
             if parsed_time is None:
                 continue
 
@@ -435,7 +495,7 @@ class WordCloud(commands.Cog):
             if now.hour != parsed_time[0] or now.minute != parsed_time[1]:
                 continue
 
-            if self._should_execute(frequency, last_executed, now):
+            if should_execute_schedule(frequency, last_executed, now, self.JST):
                 await self._execute_scheduled_wordcloud(guild_id, channel_id, frequency)
 
     @check_scheduled_wordclouds.before_loop
@@ -460,46 +520,27 @@ class WordCloud(commands.Cog):
                 print(f"Channel {channel_id} not found in guild {guild_id}")
                 return
 
-            # メッセージを取得
             try:
-                docs = list(
-                    self.bot.db.messages.find(
-                        {
-                            "guild_id": guild_id,
-                            "content": {"$type": "string", "$ne": ""},
-                        },
-                        {"content": 1},
-                    )
-                    .sort("timestamp", -1)
-                    .limit(3000)
-                )
-            except Exception as e:
-                print(f"Database query error for scheduled wordcloud: {e}")
+                docs = fetch_wordcloud_documents(self.bot.db, guild_id)
+            except Exception as error:
+                print(f"Database query error for scheduled wordcloud: {error}")
                 return
 
             if not docs:
-                # メッセージがない場合はスキップ
-                self._update_last_executed(guild_id, channel_id, frequency)
+                update_last_executed(self.bot.db, guild_id, channel_id, frequency)
                 return
 
-            raw_text = " ".join(
-                strip_decoration(doc.get("content", "")) for doc in docs
-            )
+            raw_text = build_wordcloud_source_text(docs)
 
             try:
-                image_buffer = generate_wordcloud_image(raw_text)
-            except (ValueError, RuntimeError) as e:
-                print(f"Error generating wordcloud: {e}")
-                self._update_last_executed(guild_id, channel_id, frequency)
+                image_buffer = generate_wordcloud_image(db=self.bot.db, text=raw_text)
+            except (ValueError, RuntimeError) as error:
+                print(f"Error generating wordcloud: {error}")
+                update_last_executed(self.bot.db, guild_id, channel_id, frequency)
                 return
 
-            frequency_jp = {
-                "daily": "デイリー",
-                "weekly": "ウィークリー",
-                "monthly": "マンスリー",
-            }
             embed = embed_helper.create_success_embed(
-                title=f"{frequency_jp.get(frequency, frequency)}ワードクラウド",
+                title=f"{get_frequency_label(frequency)}ワードクラウド",
                 description=f"最新{len(docs)}件のメッセージから生成されました！",
                 binary_data=image_buffer.getvalue(),
                 binary_filename="wordcloud.png",
@@ -510,87 +551,37 @@ class WordCloud(commands.Cog):
                 file=discord.File(fp=image_buffer, filename="wordcloud.png"),
             )
 
-            # 最終実行日時を更新
-            self._update_last_executed(guild_id, channel_id, frequency)
+            update_last_executed(self.bot.db, guild_id, channel_id, frequency)
 
         except Exception as e:
             print(f"Error executing scheduled wordcloud: {e}")
 
-    def _update_last_executed(self, guild_id: str, channel_id: str, frequency: str):
-        """最終実行日時を更新"""
-        try:
-            self.bot.db.guild_settings.update_one(
-                {
-                    "guild_id": guild_id,
-                    "channel_id": channel_id,
-                    "frequency": frequency,
-                },
-                {"$set": {"last_executed": discord.utils.utcnow().isoformat()}},
-            )
-        except Exception as e:
-            print(f"Error updating last_executed: {e}")
+    @tasks.loop(minutes=10)
+    async def background_learn(self):
+        last_id = self.bot.db.meta.find_one({"_id": "last_learn_id"})
+        docs = fetch_learning_documents(
+            self.bot.db,
+            last_id["value"] if last_id else None,
+        )
 
-    def _parse_schedule_time(self, schedule_time: str) -> Optional[tuple[int, int]]:
-        """HH:MM形式の時刻を検証して返す。"""
-        try:
-            hour_str, minute_str = schedule_time.split(":", maxsplit=1)
-            hour = int(hour_str)
-            minute = int(minute_str)
-        except (ValueError, AttributeError):
-            return None
+        if not docs:
+            return
 
-        if 0 <= hour <= 23 and 0 <= minute <= 59:
-            return hour, minute
-        return None
+        text = build_wordcloud_source_text(docs)
+        learn_from_text(self.bot.db, text)
+        update_last_learn_id(self.bot.db, docs[-1]["_id"])
 
-    def _parse_last_executed(self, value: Optional[str]) -> Optional[datetime]:
-        if value is None:
-            return None
+    @background_learn.before_loop
+    async def before_background_learn(self):
+        await self.bot.wait_until_ready()
 
-        try:
-            parsed = datetime.fromisoformat(value)
-        except ValueError:
-            return None
+    @tasks.loop(hours=24)
+    async def update_compounds_task(self):
+        update_compounds(self.bot.db)
 
-        # 既存データにtzinfoが無い場合はUTC扱いで補正
-        if parsed.tzinfo is None:
-            parsed = parsed.replace(tzinfo=ZoneInfo("UTC"))
-
-        return parsed.astimezone(self.JST)
-
-    def _should_execute(
-        self, frequency: str, last_executed: Optional[str], now_jst: datetime
-    ) -> bool:
-        last_executed_dt = self._parse_last_executed(last_executed)
-
-        if frequency == "daily":
-            if last_executed_dt is None:
-                return True
-            return last_executed_dt.date() != now_jst.date()
-
-        if frequency == "weekly":
-            # weeklyは月曜日のみ実行
-            if now_jst.weekday() != 0:
-                return False
-            if last_executed_dt is None:
-                return True
-            return (
-                last_executed_dt.isocalendar().year != now_jst.isocalendar().year
-                or last_executed_dt.isocalendar().week != now_jst.isocalendar().week
-            )
-
-        if frequency == "monthly":
-            # monthlyは31日のみ実行
-            if now_jst.day != 31:
-                return False
-            if last_executed_dt is None:
-                return True
-            return (
-                last_executed_dt.year != now_jst.year
-                or last_executed_dt.month != now_jst.month
-            )
-
-        return False
+    @update_compounds_task.before_loop
+    async def before_update_compounds_task(self):
+        await self.bot.wait_until_ready()
 
 
 async def setup(bot: commands.Bot):

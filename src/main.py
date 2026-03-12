@@ -2,9 +2,15 @@ import discord
 import os
 import sys
 import asyncio
+import re
 from pymongo import MongoClient
 from discord.ext import commands, tasks
-import re
+from libs.message_store import (
+    delete_guild_data,
+    delete_messages_by_ids,
+    is_channel_opted_out,
+    is_user_opted_out,
+)
 
 # Add src directory to sys.path for imports
 sys.path.insert(0, os.path.dirname(__file__))
@@ -115,17 +121,11 @@ async def on_message(message):
     if message.guild is None:
         return
 
-    if channel_opt_out := bot.db.channel_settings.find_one(
-        {"guild_id": str(message.guild.id), "channel_id": str(message.channel.id)}
-    ):
-        # チャンネル単位でOptout=trueならデータ収集しない
-        if channel_opt_out.get("opt_out", False):
-            return
+    if is_channel_opted_out(bot.db, str(message.guild.id), str(message.channel.id)):
+        return
 
-    if opt_out := bot.db.user_settings.find_one({"user_id": str(message.author.id)}):
-        # Optout=trueならデータ収集しない
-        if opt_out.get("opt_out", False):
-            return
+    if is_user_opted_out(bot.db, str(message.author.id)):
+        return
 
     roles = message.author.roles
 
@@ -159,31 +159,18 @@ async def on_message(message):
 
     await bot.process_commands(message)
 
-
-def _delete_message_records(message_ids):
-    normalized_ids = [str(message_id) for message_id in message_ids]
-    result = bot.db.messages.delete_many({"message_id": {"$in": normalized_ids}})
-    return result.deleted_count
-
-
 @bot.event
 async def on_guild_remove(guild):
     print(f"Left guild: {guild.name} (ID: {guild.id})")
-    # サーバーから退出した際に、そのサーバーのメッセージデータを削除する
-    result = bot.db.messages.delete_many({"guild_id": str(guild.id)})
+    deleted = delete_guild_data(bot.db, str(guild.id))
     print(
-        f"Deleted {result.deleted_count} messages from the database for guild {guild.name}"
-    )
-    # 設定の削除
-    settings_result = bot.db.guild_settings.delete_many({"guild_id": str(guild.id)})
-    print(
-        f"Deleted {settings_result.deleted_count} guild settings from the database for guild {guild.name}"
-    )
-    channel_settings_result = bot.db.channel_settings.delete_many(
-        {"guild_id": str(guild.id)}
+        f"Deleted {deleted['messages']} messages from the database for guild {guild.name}"
     )
     print(
-        f"Deleted {channel_settings_result.deleted_count} channel settings from the database for guild {guild.name}"
+        f"Deleted {deleted['guild_settings']} guild settings from the database for guild {guild.name}"
+    )
+    print(
+        f"Deleted {deleted['channel_settings']} channel settings from the database for guild {guild.name}"
     )
 
 
@@ -195,7 +182,7 @@ async def on_raw_message_delete(payload):
     if payload.guild_id is None:
         return
 
-    deleted_count = _delete_message_records([payload.message_id])
+    deleted_count = delete_messages_by_ids(bot.db, [payload.message_id])
     if deleted_count > 0:
         guild = bot.get_guild(payload.guild_id)
         channel = bot.get_channel(payload.channel_id)
@@ -214,7 +201,7 @@ async def on_raw_bulk_message_delete(payload):
     if payload.guild_id is None:
         return
 
-    deleted_count = _delete_message_records(payload.message_ids)
+    deleted_count = delete_messages_by_ids(bot.db, payload.message_ids)
     if deleted_count > 0:
         guild = bot.get_guild(payload.guild_id)
         guild_name = guild.name if guild is not None else "Unknown Guild"
