@@ -2,11 +2,15 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 from typing import Optional
-from datetime import timedelta
-from collections import defaultdict
 
-from libs.visualize import generate_conversation_network
 from libs.embed import EmbedHelper
+from libs.network_service import (
+    build_node_labels,
+    build_conversation_edges,
+    fetch_network_documents,
+    generate_conversation_network,
+)
+from libs.wordcloud_service import parse_period_days
 
 
 class ConversationNetwork(commands.Cog):
@@ -55,20 +59,9 @@ class ConversationNetwork(commands.Cog):
             await interaction.response.send_message(embed=embed, ephemeral=True)
             return
 
-        # period
-        period_filter = {}
         if period:
             try:
-                period_days = int(period)
-                if period_days <= 0:
-                    raise ValueError
-                period_filter = {
-                    "timestamp": {
-                        "$gte": (
-                            discord.utils.utcnow() - timedelta(days=period_days)
-                        ).isoformat()
-                    }
-                }
+                period_days = parse_period_days(period)
             except ValueError:
                 embed = embed_helper.create_error_embed(
                     title="エラー",
@@ -84,35 +77,19 @@ class ConversationNetwork(commands.Cog):
                 await interaction.response.send_message(embed=embed, ephemeral=True)
                 print(f"Error processing network period: {e}")
                 return
-
-        user_filter = {}
-        if user:
-            user_filter = {"user_id": str(user.id)}
-
-        channel_filter = {}
-        if channel:
-            channel_filter = {"channel_id": str(channel.id)}
+        else:
+            period_days = None
 
         await interaction.response.defer(thinking=True)
 
         try:
-            docs = list(
-                self.bot.db.messages.find(
-                    {
-                        "guild_id": str(interaction.guild_id),
-                        **period_filter,
-                        **user_filter,
-                        **channel_filter,
-                    },
-                    {
-                        "message_id": 1,
-                        "user_id": 1,
-                        "reply_to": 1,
-                        "mentions": 1,
-                    },
-                )
-                .sort("timestamp", -1)
-                .limit(self.MAX_MESSAGE_COUNT)
+            docs = fetch_network_documents(
+                self.bot.db,
+                str(interaction.guild_id),
+                period_days=period_days,
+                user_id=str(user.id) if user else None,
+                channel_id=str(channel.id) if channel else None,
+                limit=self.MAX_MESSAGE_COUNT,
             )
         except Exception as e:
             embed = embed_helper.create_error_embed(
@@ -131,68 +108,16 @@ class ConversationNetwork(commands.Cog):
             await interaction.followup.send(embed=embed)
             return
 
-        # message map
-        valid_docs = []
-        invalid_doc_count = 0
+        edges, invalid_doc_count = build_conversation_edges(docs)
+        valid_doc_count = len(docs) - invalid_doc_count
 
-        for doc in docs:
-            message_id = doc.get("message_id")
-            author_id = doc.get("user_id")
-
-            if message_id is None or author_id is None:
-                invalid_doc_count += 1
-                continue
-
-            valid_docs.append(
-                {
-                    "message_id": str(message_id),
-                    "user_id": str(author_id),
-                    "reply_to": (
-                        str(doc["reply_to"])
-                        if doc.get("reply_to") is not None
-                        else None
-                    ),
-                    "mentions": [
-                        str(mentioned)
-                        for mentioned in doc.get("mentions", [])
-                        if mentioned is not None
-                    ],
-                }
-            )
-
-        if not valid_docs:
+        if valid_doc_count <= 0:
             embed = embed_helper.create_warning_embed(
                 title="データ不足",
                 description="解析に使えるメッセージがありませんでした。",
             )
             await interaction.followup.send(embed=embed)
             return
-
-        msg_map = {doc["message_id"]: doc for doc in valid_docs}
-
-        edges = defaultdict(int)
-
-        for msg in valid_docs:
-
-            author = msg.get("user_id")
-            if author is None:
-                continue
-
-            # reply
-            reply_to = msg.get("reply_to")
-            if reply_to and reply_to in msg_map:
-                other = msg_map[reply_to].get("user_id")
-                if author != other:
-                    edges[tuple(sorted([author, other]))] += 1
-
-            # mention
-            mentions = msg.get("mentions", [])
-            if not isinstance(mentions, list):
-                continue
-
-            for mentioned in mentions:
-                if mentioned != author:
-                    edges[tuple(sorted([author, mentioned]))] += 1
 
         if not edges:
             embed = embed_helper.create_warning_embed(
@@ -202,29 +127,16 @@ class ConversationNetwork(commands.Cog):
             await interaction.followup.send(embed=embed)
             return
 
-        # user id → name
-        user_map = {}
+        def resolve_name(user_id: str) -> str:
+            try:
+                member = interaction.guild.get_member(int(user_id))
+                return member.display_name if member else user_id
+            except (TypeError, ValueError):
+                return user_id
 
-        for a, b in edges.keys():
-            if a not in user_map:
-                try:
-                    member = interaction.guild.get_member(int(a))
-                    user_map[a] = member.display_name if member else a
-                except (TypeError, ValueError):
-                    user_map[a] = a
+        node_labels = build_node_labels(edges, resolve_name)
 
-            if b not in user_map:
-                try:
-                    member = interaction.guild.get_member(int(b))
-                    user_map[b] = member.display_name if member else b
-                except (TypeError, ValueError):
-                    user_map[b] = b
-
-        named_edges = {
-            (user_map[a], user_map[b]): count for (a, b), count in edges.items()
-        }
-
-        if not named_edges:
+        if not node_labels:
             embed = embed_helper.create_warning_embed(
                 title="会話不足",
                 description="ネットワーク図に変換できるデータがありませんでした。",
@@ -233,7 +145,7 @@ class ConversationNetwork(commands.Cog):
             return
 
         try:
-            image_buffer = generate_conversation_network(named_edges)
+            image_buffer = generate_conversation_network(edges, labels=node_labels)
         except ValueError:
             embed = embed_helper.create_warning_embed(
                 title="会話不足",
@@ -260,7 +172,7 @@ class ConversationNetwork(commands.Cog):
         embed = embed_helper.create_success_embed(
             title="会話ネットワーク生成",
             description=(
-                f"{len(valid_docs)}件のメッセージを解析しました"
+                f"{valid_doc_count}件のメッセージを解析しました"
                 + (
                     f"\n不正データ {invalid_doc_count}件 は自動でスキップしました"
                     if invalid_doc_count
