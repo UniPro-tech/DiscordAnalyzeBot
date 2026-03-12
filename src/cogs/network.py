@@ -5,10 +5,10 @@ from typing import Optional
 
 from libs.embed import EmbedHelper
 from libs.network_service import (
+    build_node_labels,
     build_conversation_edges,
     fetch_network_documents,
     generate_conversation_network,
-    label_edges,
 )
 from libs.wordcloud_service import parse_period_days
 
@@ -134,9 +134,9 @@ class ConversationNetwork(commands.Cog):
             except (TypeError, ValueError):
                 return user_id
 
-        named_edges = label_edges(edges, resolve_name)
+        node_labels = build_node_labels(edges, resolve_name)
 
-        if not named_edges:
+        if not node_labels:
             embed = embed_helper.create_warning_embed(
                 title="会話不足",
                 description="ネットワーク図に変換できるデータがありませんでした。",
@@ -145,7 +145,7 @@ class ConversationNetwork(commands.Cog):
             return
 
         try:
-            image_buffer = generate_conversation_network(named_edges)
+            image_buffer = generate_conversation_network(edges, labels=node_labels)
         except ValueError:
             embed = embed_helper.create_warning_embed(
                 title="会話不足",

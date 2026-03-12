@@ -41,6 +41,27 @@ def test_should_execute_schedule_for_daily_compares_dates_only():
     assert should_execute_schedule("daily", "2026-03-12T00:00:00+09:00", now, JST) is False
 
 
+def test_should_execute_schedule_for_monthly_on_actual_month_end():
+    now_april_end = datetime(2026, 4, 30, 9, 0, tzinfo=JST)
+
+    assert should_execute_schedule("monthly", None, now_april_end, JST) is True
+    assert (
+        should_execute_schedule(
+            "monthly",
+            "2026-04-01T00:00:00+09:00",
+            now_april_end,
+            JST,
+        )
+        is False
+    )
+
+
+def test_should_execute_schedule_for_monthly_not_on_non_month_end_day():
+    now_not_end = datetime(2026, 4, 29, 9, 0, tzinfo=JST)
+
+    assert should_execute_schedule("monthly", None, now_not_end, JST) is False
+
+
 class _CollectionStub:
     def __init__(self):
         self.calls = []

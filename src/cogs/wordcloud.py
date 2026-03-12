@@ -567,9 +567,17 @@ class WordCloud(commands.Cog):
         if not docs:
             return
 
-        text = build_wordcloud_source_text(docs)
-        learn_from_text(self.bot.db, text)
-        update_last_learn_id(self.bot.db, docs[-1]["_id"])
+        for doc in docs:
+            try:
+                text = build_wordcloud_source_text([doc])
+                learn_from_text(self.bot.db, text)
+                update_last_learn_id(self.bot.db, doc["_id"])
+            except Exception as error:
+                print(
+                    "Error while learning message "
+                    f"{doc.get('_id')}: {error}"
+                )
+                break
 
     @background_learn.before_loop
     async def before_background_learn(self):

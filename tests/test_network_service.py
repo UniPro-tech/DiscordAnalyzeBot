@@ -1,4 +1,4 @@
-from libs.network_service import build_conversation_edges
+from libs.network_service import build_conversation_edges, build_node_labels
 
 
 def test_build_conversation_edges_counts_reply_and_mentions():
@@ -13,3 +13,18 @@ def test_build_conversation_edges_counts_reply_and_mentions():
 
     assert invalid_doc_count == 1
     assert edges == {("10", "20"): 2, ("20", "30"): 1}
+
+
+def test_build_node_labels_keeps_distinct_ids_for_same_display_name():
+    edges = {("10", "20"): 2, ("20", "30"): 1}
+
+    labels = build_node_labels(
+        edges,
+        lambda user_id: "same-name" if user_id in {"10", "20"} else "other-name",
+    )
+
+    assert labels == {
+        "10": "same-name",
+        "20": "same-name",
+        "30": "other-name",
+    }

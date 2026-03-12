@@ -3,11 +3,12 @@ from datetime import timedelta
 import io
 from typing import Callable
 
+from libs.visualization_common import resolve_font_path
+
 import matplotlib.font_manager as fm
 import matplotlib.pyplot as plt
 import networkx as nx
 
-from libs.visualization_common import resolve_font_path
 from libs.wordcloud_service import discord_utcnow
 
 
@@ -128,16 +129,23 @@ def build_conversation_edges(docs: list[dict]) -> tuple[dict[tuple[str, str], in
     return dict(edges), invalid_doc_count
 
 
-def label_edges(
+def build_node_labels(
     edges: dict[tuple[str, str], int],
     resolve_name: Callable[[str], str],
-) -> dict[tuple[str, str], int]:
-    return {
-        (resolve_name(a), resolve_name(b)): count for (a, b), count in edges.items()
-    }
+) -> dict[str, str]:
+    labels = {}
+
+    for user_a, user_b in edges:
+        labels[user_a] = resolve_name(user_a)
+        labels[user_b] = resolve_name(user_b)
+
+    return labels
 
 
-def generate_conversation_network(edges: dict[tuple[str, str], int]) -> io.BytesIO:
+def generate_conversation_network(
+    edges: dict[tuple[str, str], int],
+    labels: dict[str, str] | None = None,
+) -> io.BytesIO:
     if not edges:
         raise ValueError("会話エッジがありません")
 
@@ -157,12 +165,14 @@ def generate_conversation_network(edges: dict[tuple[str, str], int]) -> io.Bytes
 
         if user_a not in node_map:
             node_map[user_a] = index
-            labels[index] = user_a
+            label_text = labels.get(user_a, user_a) if labels else user_a
+            labels[index] = label_text
             index += 1
 
         if user_b not in node_map:
             node_map[user_b] = index
-            labels[index] = user_b
+            label_text = labels.get(user_b, user_b) if labels else user_b
+            labels[index] = label_text
             index += 1
 
         graph.add_edge(node_map[user_a], node_map[user_b], weight=weight)

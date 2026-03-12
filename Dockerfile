@@ -30,8 +30,10 @@ COPY uv.lock* ./
 
 ENV UV_NO_DEV=1
 # --locked を使いつつ同期
-RUN uv sync --locked
+RUN uv sync --locked --no-install-project
 
 COPY . .
+
+RUN uv sync --locked
 
 CMD ["uv", "run", "/app/src/main.py"]

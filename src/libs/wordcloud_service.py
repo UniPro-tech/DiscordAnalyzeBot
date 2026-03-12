@@ -1,3 +1,4 @@
+from calendar import monthrange
 from datetime import datetime, timedelta
 import io
 from typing import Optional
@@ -337,7 +338,9 @@ def should_execute_schedule(
         )
 
     if frequency == "monthly":
-        if now_jst.day != 31:
+        last_day = monthrange(now_jst.year, now_jst.month)[1]
+
+        if now_jst.day != last_day:
             return False
         if last_executed_dt is None:
             return True
