@@ -134,6 +134,24 @@ def apply_learned_compounds(words: list[str], compounds: set[str]) -> list[str]:
     index = 0
 
     while index < len(words):
+        if index + 2 < len(words):
+            first_bigram = words[index] + words[index + 1]
+            second_bigram = words[index + 1] + words[index + 2]
+
+            # Fallback: if overlapping bigrams are learned, promote to a 3-word phrase.
+            if first_bigram in compounds and second_bigram in compounds:
+                joined.append(words[index] + words[index + 1] + words[index + 2])
+                index += 3
+                continue
+
+        if index + 2 < len(words):
+            trigram_compound = words[index] + words[index + 1] + words[index + 2]
+
+            if trigram_compound in compounds:
+                joined.append(trigram_compound)
+                index += 3
+                continue
+
         if index + 1 < len(words):
             compound = words[index] + words[index + 1]
 

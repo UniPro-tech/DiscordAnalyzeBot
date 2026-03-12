@@ -27,6 +27,22 @@ def test_apply_learned_compounds_joins_adjacent_words():
     ]
 
 
+def test_apply_learned_compounds_prefers_trigram_over_bigram():
+    words = ["自然", "言語", "処理"]
+
+    assert apply_learned_compounds(words, {"自然言語", "自然言語処理"}) == [
+        "自然言語処理",
+    ]
+
+
+def test_apply_learned_compounds_promotes_overlapping_bigrams_to_trigram():
+    words = ["ミラノ", "風", "ドリア"]
+
+    assert apply_learned_compounds(words, {"ミラノ風", "風ドリア"}) == [
+        "ミラノ風ドリア",
+    ]
+
+
 def test_extract_tokens_keeps_style_suffix_for_compound_words():
     assert extract_tokens("ミラノ風ドリア") == ["ミラノ", "風", "ドリア"]
 

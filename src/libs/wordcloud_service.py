@@ -102,7 +102,7 @@ def save_unigram(db, token: str) -> None:
     )
 
 
-def save_ngram(db, ngram: tuple[str, str]) -> None:
+def save_ngram(db, ngram: tuple[str, ...]) -> None:
     db.ngrams.update_one(
         {"ngram": list(ngram)},
         {"$inc": {"count": 1}},
@@ -129,13 +129,41 @@ def learn_from_text(db, text: str) -> None:
     for token in tokens:
         save_unigram(db, token)
 
-    for index in range(len(token_entries) - 1):
-        left_word, left_pos = token_entries[index]
-        right_word, right_pos = token_entries[index + 1]
+    for ngram_size in (2, 3):
+        for index in range(len(token_entries) - ngram_size + 1):
+            window = token_entries[index : index + ngram_size]
 
-        # Keep only truly adjacent tokens in original text.
-        if right_pos - left_pos == 1:
-            save_ngram(db, (left_word, right_word))
+            # Keep only truly adjacent tokens in original text.
+            if all(
+                window[pos + 1][1] - window[pos][1] == 1
+                for pos in range(len(window) - 1)
+            ):
+                save_ngram(db, tuple(word for word, _ in window))
+
+
+def _compute_bigram_pmi(db, left_word: str, right_word: str, total: int) -> float | None:
+    bigram_doc = db.ngrams.find_one({"ngram": [left_word, right_word]})
+
+    if not bigram_doc:
+        return None
+
+    count_xy = bigram_doc["count"]
+
+    if count_xy < COUNT_THRESHOLD:
+        return None
+
+    unigram_x = db.unigrams.find_one({"word": left_word})
+    unigram_y = db.unigrams.find_one({"word": right_word})
+
+    if not unigram_x or not unigram_y:
+        return None
+
+    return compute_pmi(
+        count_xy,
+        unigram_x["count"],
+        unigram_y["count"],
+        total,
+    )
 
 
 def update_compounds(db) -> None:
@@ -144,32 +172,71 @@ def update_compounds(db) -> None:
     if total == 0:
         return
 
+    accepted_bigrams: dict[tuple[str, str], float] = {}
+
     for doc in db.ngrams.find():
-        w1, w2 = doc["ngram"]
+        ngram_words = doc["ngram"]
         count_xy = doc["count"]
+        ngram_size = len(ngram_words)
 
         if count_xy < COUNT_THRESHOLD:
             continue
 
-        unigram_x = db.unigrams.find_one({"word": w1})
-        unigram_y = db.unigrams.find_one({"word": w2})
-
-        if not unigram_x or not unigram_y:
+        if ngram_size not in (2, 3):
             continue
 
-        pmi = compute_pmi(
-            count_xy,
-            unigram_x["count"],
-            unigram_y["count"],
-            total,
-        )
+        if ngram_size == 2:
+            w1, w2 = ngram_words
+            pmi = _compute_bigram_pmi(db, w1, w2, total)
+
+            if pmi is None:
+                continue
+
+            if pmi >= PMI_THRESHOLD:
+                db.compounds.update_one(
+                    {"word": w1 + w2},
+                    {"$set": {"pmi": pmi}},
+                    upsert=True,
+                )
+                accepted_bigrams[(w1, w2)] = pmi
+
+            continue
+
+        w1, w2, w3 = ngram_words
+        left_pmi = _compute_bigram_pmi(db, w1, w2, total)
+        right_pmi = _compute_bigram_pmi(db, w2, w3, total)
+
+        if left_pmi is None or right_pmi is None:
+            continue
+
+        pmi = min(left_pmi, right_pmi)
 
         if pmi >= PMI_THRESHOLD:
             db.compounds.update_one(
-                {"word": w1 + w2},
+                {"word": "".join(ngram_words)},
                 {"$set": {"pmi": pmi}},
                 upsert=True,
             )
+
+    # Promote overlapping bigrams (A+B and B+C) to trigram compounds (A+B+C).
+    bigrams_by_left: dict[str, list[tuple[str, float]]] = {}
+
+    for (left_word, right_word), pmi in accepted_bigrams.items():
+        if left_word not in bigrams_by_left:
+            bigrams_by_left[left_word] = []
+
+        bigrams_by_left[left_word].append((right_word, pmi))
+
+    for (w1, w2), left_pmi in accepted_bigrams.items():
+        for w3, right_pmi in bigrams_by_left.get(w2, []):
+            trigram_pmi = min(left_pmi, right_pmi)
+
+            if trigram_pmi >= PMI_THRESHOLD:
+                db.compounds.update_one(
+                    {"word": w1 + w2 + w3},
+                    {"$set": {"pmi": trigram_pmi}},
+                    upsert=True,
+                )
 
 
 def load_compounds(db) -> set[str]:

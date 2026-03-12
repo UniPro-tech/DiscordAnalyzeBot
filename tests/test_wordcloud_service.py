@@ -1,7 +1,12 @@
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from libs.wordcloud_service import learn_from_text, parse_schedule_time, should_execute_schedule
+from libs.wordcloud_service import (
+    learn_from_text,
+    parse_schedule_time,
+    should_execute_schedule,
+    update_compounds,
+)
 
 
 JST = ZoneInfo("Asia/Tokyo")
@@ -50,6 +55,45 @@ class _DBStub:
         self.ngrams = _CollectionStub()
 
 
+class _UnigramCollectionForUpdateStub:
+    def __init__(self, docs):
+        self._docs_by_word = {doc["word"]: doc for doc in docs}
+        self._total = sum(doc["count"] for doc in docs)
+
+    def aggregate(self, _pipeline):
+        return iter([{"_id": None, "total": self._total}])
+
+    def find_one(self, query):
+        return self._docs_by_word.get(query["word"])
+
+
+class _NgramCollectionForUpdateStub:
+    def __init__(self, docs):
+        self._docs = docs
+        self._docs_by_ngram = {tuple(doc["ngram"]): doc for doc in docs}
+
+    def find(self):
+        return self._docs
+
+    def find_one(self, query):
+        return self._docs_by_ngram.get(tuple(query["ngram"]))
+
+
+class _CompoundsCollectionForUpdateStub:
+    def __init__(self):
+        self.calls = []
+
+    def update_one(self, query, update, upsert=False):
+        self.calls.append((query, update, upsert))
+
+
+class _UpdateCompoundsDBStub:
+    def __init__(self, unigram_docs, ngram_docs):
+        self.unigrams = _UnigramCollectionForUpdateStub(unigram_docs)
+        self.ngrams = _NgramCollectionForUpdateStub(ngram_docs)
+        self.compounds = _CompoundsCollectionForUpdateStub()
+
+
 def test_learn_from_text_does_not_create_ngram_across_particle():
     db = _DBStub()
 
@@ -59,3 +103,49 @@ def test_learn_from_text_does_not_create_ngram_across_particle():
     assert len(db.unigrams.calls) == 2
     # No ngram should be created across "の".
     assert db.ngrams.calls == []
+
+
+def test_learn_from_text_creates_trigram_for_adjacent_tokens():
+    db = _DBStub()
+
+    learn_from_text(db, "経済社会問題")
+
+    learned_ngrams = [call[0]["ngram"] for call in db.ngrams.calls]
+
+    assert ["経済", "社会"] in learned_ngrams
+    assert ["社会", "問題"] in learned_ngrams
+    assert ["経済", "社会", "問題"] in learned_ngrams
+
+
+def test_learn_from_text_does_not_create_trigram_across_particle():
+    db = _DBStub()
+
+    learn_from_text(db, "経済の社会問題")
+
+    learned_ngrams = [call[0]["ngram"] for call in db.ngrams.calls]
+
+    assert ["社会", "問題"] in learned_ngrams
+    assert ["経済", "社会", "問題"] not in learned_ngrams
+
+
+def test_update_compounds_promotes_overlapping_bigrams_to_trigram():
+    db = _UpdateCompoundsDBStub(
+        unigram_docs=[
+            {"word": "ミラノ", "count": 20},
+            {"word": "風", "count": 20},
+            {"word": "ドリア", "count": 20},
+            {"word": "その他", "count": 340},
+        ],
+        ngram_docs=[
+            {"ngram": ["ミラノ", "風"], "count": 10},
+            {"ngram": ["風", "ドリア"], "count": 10},
+        ],
+    )
+
+    update_compounds(db)
+
+    saved_words = [call[0]["word"] for call in db.compounds.calls]
+
+    assert "ミラノ風" in saved_words
+    assert "風ドリア" in saved_words
+    assert "ミラノ風ドリア" in saved_words
