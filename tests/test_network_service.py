@@ -1,7 +1,12 @@
 from libs.network_service import (
     build_conversation_edges,
     build_node_labels,
+    calculate_label_display_width,
+    calculate_label_font_size,
+    calculate_layout_spacing,
+    calculate_node_size,
     fetch_network_documents,
+    generate_conversation_network,
 )
 
 
@@ -142,3 +147,60 @@ def test_fetch_network_documents_includes_missing_reply_targets():
 
     assert invalid_doc_count == 0
     assert edges == {("10", "20"): 1}
+
+
+def test_generate_conversation_network_uses_provided_labels(monkeypatch):
+    captured = {}
+
+    def _fake_draw(_graph, _positions, **kwargs):
+        captured["node_size"] = kwargs["node_size"]
+        captured["width"] = list(kwargs["width"])
+
+    def _fake_draw_networkx_labels(_graph, _positions, labels, **_kwargs):
+        captured["labels"] = dict(labels)
+        captured["font_size"] = _kwargs["font_size"]
+        return {}
+
+    monkeypatch.setattr("libs.network_service.resolve_font_path", lambda: "fonts/ipaexg.ttf")
+    monkeypatch.setattr("libs.network_service.nx.draw", _fake_draw)
+    monkeypatch.setattr("libs.network_service.nx.draw_networkx_labels", _fake_draw_networkx_labels)
+
+    generate_conversation_network(
+        {("10", "20"): 2},
+        labels={"10": "Alice", "20": "Bob"},
+    )
+
+    assert set(captured["labels"].values()) == {"Alice", "Bob"}
+    assert captured["font_size"] == calculate_label_font_size(2, ["Alice", "Bob"])
+    assert captured["node_size"] == calculate_node_size(2, ["Alice", "Bob"])
+    assert captured["width"]
+
+
+def test_calculate_label_display_width_counts_wide_characters():
+    assert calculate_label_display_width("ABCD") == 4
+    assert calculate_label_display_width("あい") == 4
+
+
+def test_calculate_label_font_size_considers_node_count_and_label_length():
+    assert calculate_label_font_size(2, ["Alice", "Bob"]) > calculate_label_font_size(
+        12,
+        ["Alice", "Bob"],
+    )
+    assert calculate_label_font_size(4, ["短い"]) > calculate_label_font_size(
+        4,
+        ["とても長いユーザー表示名です"],
+    )
+
+
+def test_calculate_node_size_grows_for_longer_labels():
+    assert calculate_node_size(4, ["Amy", "Bob"]) < calculate_node_size(
+        4,
+        ["VeryLongDisplayName", "AnotherLongDisplayName"],
+    )
+
+
+def test_calculate_layout_spacing_expands_for_long_labels():
+    assert calculate_layout_spacing(6, ["Amy", "Bob"]) < calculate_layout_spacing(
+        6,
+        ["とても長いユーザー表示名です", "かなり長い別名です"],
+    )

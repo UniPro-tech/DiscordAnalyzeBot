@@ -1,7 +1,9 @@
 from collections import defaultdict
 from datetime import timedelta
 import io
+import math
 from typing import Callable
+import unicodedata
 
 from libs.visualization_common import resolve_font_path
 
@@ -13,6 +15,9 @@ from libs.wordcloud_service import discord_utcnow
 
 
 DEFAULT_MESSAGE_LIMIT = 5000
+CANVAS_WIDTH_PX = 3200
+CANVAS_HEIGHT_PX = 1800
+CANVAS_DPI = 100
 
 
 def build_network_message_query(
@@ -198,6 +203,123 @@ def build_node_labels(
     return labels
 
 
+def calculate_label_display_width(label: str) -> int:
+    width = 0
+
+    for char in str(label):
+        width += 2 if unicodedata.east_asian_width(char) in {"W", "F"} else 1
+
+    return max(1, width)
+
+
+def summarize_label_metrics(label_texts: list[str] | None) -> tuple[int, float]:
+    if not label_texts:
+        return 1, 1.0
+
+    widths = [calculate_label_display_width(text) for text in label_texts]
+    return max(widths), sum(widths) / len(widths)
+
+
+def calculate_label_font_size(
+    node_count: int,
+    label_texts: list[str] | None = None,
+    *,
+    canvas_width_px: int = CANVAS_WIDTH_PX,
+    canvas_height_px: int = CANVAS_HEIGHT_PX,
+) -> int:
+    if node_count <= 0:
+        return 128
+
+    max_label_width, average_label_width = summarize_label_metrics(label_texts)
+    base_size = min(canvas_width_px, canvas_height_px) * 0.1
+    density_factor = math.sqrt(max(node_count, 1))
+    length_factor = max(1.0, math.sqrt(max_label_width / 8), average_label_width / 10)
+
+    return max(24, min(140, int(base_size / density_factor / length_factor)))
+
+
+def calculate_node_size(
+    node_count: int,
+    label_texts: list[str] | None = None,
+    *,
+    canvas_width_px: int = CANVAS_WIDTH_PX,
+    canvas_height_px: int = CANVAS_HEIGHT_PX,
+) -> int:
+    label_font_size = calculate_label_font_size(
+        node_count,
+        label_texts,
+        canvas_width_px=canvas_width_px,
+        canvas_height_px=canvas_height_px,
+    )
+    max_label_width, average_label_width = summarize_label_metrics(label_texts)
+    label_width_factor = max(4.0, min(18.0, (max_label_width + average_label_width) / 2))
+
+    return max(1800, min(14000, int(label_font_size * label_width_factor * 14)))
+
+
+def calculate_layout_spacing(
+    node_count: int,
+    label_texts: list[str] | None = None,
+    *,
+    canvas_width_px: int = CANVAS_WIDTH_PX,
+    canvas_height_px: int = CANVAS_HEIGHT_PX,
+) -> float:
+    max_label_width, average_label_width = summarize_label_metrics(label_texts)
+    aspect_ratio = canvas_width_px / canvas_height_px
+    base_k = 1 / math.sqrt(max(node_count, 1))
+    spacing_multiplier = (
+        2.2
+        + min(max_label_width / 10, 1.8)
+        + min(average_label_width / 14, 1.0)
+        + min(node_count / 24, 1.0)
+    )
+
+    return base_k * spacing_multiplier * max(1.0, aspect_ratio / 1.4)
+
+
+def calculate_layout_iterations(node_count: int) -> int:
+    return max(120, min(400, 80 + node_count * 10))
+
+
+def normalize_layout_positions(
+    positions: dict[int, tuple[float, float]],
+    *,
+    font_size: int,
+    max_label_width: int,
+    canvas_width_px: int = CANVAS_WIDTH_PX,
+    canvas_height_px: int = CANVAS_HEIGHT_PX,
+) -> dict[int, tuple[float, float]]:
+    if not positions:
+        return positions
+
+    x_values = [position[0] for position in positions.values()]
+    y_values = [position[1] for position in positions.values()]
+    x_min, x_max = min(x_values), max(x_values)
+    y_min, y_max = min(y_values), max(y_values)
+
+    padding_x = min(0.18, max(0.04, (font_size * max_label_width) / (canvas_width_px * 1.6)))
+    padding_y = min(0.16, max(0.04, (font_size * 1.8) / canvas_height_px))
+
+    normalized_positions = {}
+    for node, (x_value, y_value) in positions.items():
+        normalized_x = 0.5 if x_max == x_min else (x_value - x_min) / (x_max - x_min)
+        normalized_y = 0.5 if y_max == y_min else (y_value - y_min) / (y_max - y_min)
+        normalized_positions[node] = (
+            padding_x + normalized_x * (1 - padding_x * 2),
+            padding_y + normalized_y * (1 - padding_y * 2),
+        )
+
+    return normalized_positions
+
+
+def calculate_edge_widths(weights: list[int], node_count: int, label_font_size: int) -> list[float]:
+    density_factor = max(0.7, 1.2 - math.log2(node_count + 1) * 0.12)
+    return [
+        max(1.5, min(18.0, math.sqrt(weight) * (label_font_size / 18) * density_factor))
+        for weight in weights
+    ]
+
+
 def generate_conversation_network(
     edges: dict[tuple[str, str], int],
     labels: dict[str, str] | None = None,
@@ -209,10 +331,10 @@ def generate_conversation_network(
     if font_path is None:
         raise RuntimeError("フォント無し")
 
-    font_prop = fm.FontProperties(fname=font_path, size=64)
+    font_prop = fm.FontProperties(fname=font_path)
     graph = nx.Graph()
     node_map = {}
-    labels = {}
+    display_labels = {}
     index = 0
 
     for (user_a, user_b), weight in edges.items():
@@ -222,13 +344,13 @@ def generate_conversation_network(
         if user_a not in node_map:
             node_map[user_a] = index
             label_text = labels.get(user_a, user_a) if labels else user_a
-            labels[index] = label_text
+            display_labels[index] = label_text
             index += 1
 
         if user_b not in node_map:
             node_map[user_b] = index
             label_text = labels.get(user_b, user_b) if labels else user_b
-            labels[index] = label_text
+            display_labels[index] = label_text
             index += 1
 
         graph.add_edge(node_map[user_a], node_map[user_b], weight=weight)
@@ -236,34 +358,66 @@ def generate_conversation_network(
     if graph.number_of_edges() == 0:
         raise ValueError("表示条件を満たす会話エッジがありません")
 
-    positions = nx.kamada_kawai_layout(graph)
-    figure = plt.figure(figsize=(24, 24))
+    label_texts = list(display_labels.values())
+    max_label_width, _ = summarize_label_metrics(label_texts)
+    label_font_size = calculate_label_font_size(graph.number_of_nodes(), label_texts)
+    node_size = calculate_node_size(graph.number_of_nodes(), label_texts)
+    raw_positions = nx.spring_layout(
+        graph,
+        k=calculate_layout_spacing(graph.number_of_nodes(), label_texts),
+        iterations=calculate_layout_iterations(graph.number_of_nodes()),
+        seed=42,
+        weight="weight",
+    )
+    positions = normalize_layout_positions(
+        raw_positions,
+        font_size=label_font_size,
+        max_label_width=max_label_width,
+    )
+    figure, ax = plt.subplots(
+        figsize=(CANVAS_WIDTH_PX / CANVAS_DPI, CANVAS_HEIGHT_PX / CANVAS_DPI),
+        dpi=CANVAS_DPI,
+    )
     buffer = io.BytesIO()
 
     try:
         weights = [graph[node_u][node_v]["weight"] for node_u, node_v in graph.edges()]
+        edge_widths = calculate_edge_widths(weights, graph.number_of_nodes(), label_font_size)
+        figure.patch.set_facecolor("#F8FAFC")
+        ax.set_facecolor("#F8FAFC")
 
         nx.draw(
             graph,
             positions,
-            node_color="#A0CBE2",
-            node_size=5000,
-            width=[weight * 0.8 for weight in weights],
+            node_color="#8ECAE6",
+            edge_color="#94A3B8",
+            node_size=node_size,
+            width=edge_widths,
+            linewidths=max(1.5, label_font_size / 36),
+            edgecolors="#E2E8F0",
             with_labels=False,
+            ax=ax,
         )
 
         texts = nx.draw_networkx_labels(
             graph,
             positions,
-            labels,
-            font_size=128,
+            display_labels,
+            font_size=label_font_size,
+            ax=ax,
         )
 
         for text in texts.values():
             text.set_fontproperties(font_prop)
+            text.set_fontsize(label_font_size)
+            text.set_color("#0F172A")
 
-        plt.axis("off")
-        figure.savefig(buffer, format="png", bbox_inches="tight")
+        ax.set_axis_off()
+        ax.set_xlim(0, 1)
+        ax.set_ylim(0, 1)
+        ax.set_position([0.0, 0.0, 1.0, 1.0])
+        ax.margins(0)
+        figure.savefig(buffer, format="png", bbox_inches=None, pad_inches=0)
         buffer.seek(0)
     finally:
         plt.close(figure)
