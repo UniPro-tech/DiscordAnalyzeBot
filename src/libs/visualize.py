@@ -11,6 +11,8 @@ import networkx as nx
 import matplotlib.pyplot as plt
 import matplotlib.font_manager as fm
 
+from collections import defaultdict
+
 matplotlib.use("Agg")
 STOP_WORDS = {
     "ので",
@@ -54,6 +56,13 @@ STOP_WORDS = {
     "みたい",
     "やっぱ",
 }
+
+# 自動学習
+COMPOUND_COUNTER = defaultdict(int)
+LEARNED_COMPOUNDS: set[str] = set()
+
+# 学習閾値
+COMPOUND_THRESHOLD = 5
 
 DEFAULT_FONT_PATHS = [
     "/System/Library/Fonts/ヒラギノ角ゴシック W3.ttc",
@@ -138,6 +147,46 @@ def extract_nouns(text: str) -> str:
     return " ".join(words_list)
 
 
+def detect_compounds(text: str) -> None:
+    tokens = tokenizer_obj.tokenize(text, MODE)
+
+    buffer: list[str] = []
+
+    for token in tokens:
+        pos = token.part_of_speech()
+
+        if pos[0] == "名詞":
+            buffer.append(token.surface())
+        else:
+            if len(buffer) >= 2:
+                word = "".join(buffer)
+
+                if len(word) >= 4:
+                    COMPOUND_COUNTER[word] += 1
+
+                    if COMPOUND_COUNTER[word] >= COMPOUND_THRESHOLD:
+                        LEARNED_COMPOUNDS.add(word)
+
+            buffer = []
+
+    if len(buffer) >= 2:
+        word = "".join(buffer)
+
+        if len(word) >= 4:
+            COMPOUND_COUNTER[word] += 1
+
+            if COMPOUND_COUNTER[word] >= COMPOUND_THRESHOLD:
+                LEARNED_COMPOUNDS.add(word)
+
+
+def apply_learned_compounds(text: str) -> str:
+    for word in LEARNED_COMPOUNDS:
+        spaced = " ".join(list(word))
+        text = text.replace(spaced, word)
+
+    return text
+
+
 def generate_wordcloud_image(text: str, font_path: str | None = None) -> io.BytesIO:
     import matplotlib.pyplot as plt
 
@@ -146,6 +195,10 @@ def generate_wordcloud_image(text: str, font_path: str | None = None) -> io.Byte
         raise RuntimeError("WordCloudフォントが見つかりません")
 
     normalized_text = normalize_text(text)
+    # 複合語学習
+    detect_compounds(normalized_text)
+    # 学習済み複合語適用
+    normalized_text = apply_learned_compounds(normalized_text)
     words_wakachi = extract_nouns(normalized_text)
     if not words_wakachi.strip():
         raise ValueError("名詞が抽出できませんでした")
