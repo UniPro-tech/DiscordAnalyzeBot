@@ -4,7 +4,7 @@ import re
 import unicodedata
 
 import matplotlib
-from janome.tokenizer import Tokenizer
+from sudachipy import dictionary, tokenizer
 from wordcloud import WordCloud
 
 import networkx as nx
@@ -43,6 +43,16 @@ STOP_WORDS = {
     "する",
     "いる",
     "ある",
+    "www",
+    "こと",
+    "感じ",
+    "やつ",
+    "これ",
+    "それ",
+    "ここ",
+    "ところ",
+    "みたい",
+    "やっぱ",
 }
 
 DEFAULT_FONT_PATHS = [
@@ -53,6 +63,9 @@ DEFAULT_FONT_PATHS = [
     "/app/fonts/ipaexg.ttf",
     "/app/fonts/ipaexm.ttf",
 ]
+
+tokenizer_obj = dictionary.Dictionary().create()
+MODE = tokenizer.Tokenizer.SplitMode.C
 
 
 def resolve_font_path() -> str | None:
@@ -76,6 +89,9 @@ def normalize_text(text: str) -> str:
     normalized = re.sub("（", "", normalized)
     normalized = re.sub("）", "", normalized)
     normalized = re.sub("\\\\n", " ", normalized)
+    normalized = re.sub(r"https?://\S+", "", normalized)
+    normalized = re.sub(r"<@!?\d+>", "", normalized)
+    normalized = re.sub(r"<#\d+>", "", normalized)
     return unicodedata.normalize("NFKC", normalized)
 
 
@@ -105,14 +121,20 @@ def strip_decoration(text: str) -> str:
     return text.strip()
 
 
-def extract_nouns(text: str, tokenizer: Tokenizer | None = None) -> str:
-    t = tokenizer or Tokenizer()
+def extract_nouns(text: str) -> str:
     words_list: list[str] = []
-    for token in t.tokenize(text):
-        hinshi = token.part_of_speech.split(",")[0]
-        hinshi2 = token.part_of_speech.split(",")[1]
-        if hinshi == "名詞" and hinshi2 not in {"数", "代名詞", "非自立"}:
-            words_list.append(token.surface)
+
+    tokens = tokenizer_obj.tokenize(text, MODE)
+
+    for token in tokens:
+        pos = token.part_of_speech()
+
+        if pos[0] == "名詞" and pos[1] != "数":
+            word = token.surface()
+
+            if len(word) >= 2 and word not in STOP_WORDS:
+                words_list.append(word)
+
     return " ".join(words_list)
 
 

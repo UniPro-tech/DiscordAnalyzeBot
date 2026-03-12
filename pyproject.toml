@@ -6,11 +6,11 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "discord-py>=2.7.1",
-    "janome>=0.5.0",
     "matplotlib>=3.10.8",
     "networkx>=3.6.1",
     "pymongo>=4.16.0",
     "scipy>=1.17.1",
+    "sudachipy>=0.6.10",
     "wordcloud>=1.9.6",
 ]
 
