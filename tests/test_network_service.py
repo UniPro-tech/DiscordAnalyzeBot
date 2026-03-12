@@ -28,3 +28,15 @@ def test_build_node_labels_keeps_distinct_ids_for_same_display_name():
         "20": "same-name",
         "30": "other-name",
     }
+
+
+def test_build_conversation_edges_skips_doc_when_mentions_is_not_list():
+    docs = [
+        {"message_id": "1", "user_id": "10", "reply_to": None, "mentions": []},
+        {"message_id": "2", "user_id": "20", "reply_to": None, "mentions": "123"},
+    ]
+
+    edges, invalid_doc_count = build_conversation_edges(docs)
+
+    assert invalid_doc_count == 1
+    assert edges == {}

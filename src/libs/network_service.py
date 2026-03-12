@@ -81,6 +81,14 @@ def normalize_network_documents(docs: list[dict]) -> tuple[list[dict], int]:
             invalid_doc_count += 1
             continue
 
+        mentions = doc.get("mentions", [])
+        if mentions is None:
+            mentions = []
+
+        if not isinstance(mentions, list):
+            invalid_doc_count += 1
+            continue
+
         valid_docs.append(
             {
                 "message_id": str(message_id),
@@ -88,7 +96,7 @@ def normalize_network_documents(docs: list[dict]) -> tuple[list[dict], int]:
                 "reply_to": str(doc["reply_to"]) if doc.get("reply_to") is not None else None,
                 "mentions": [
                     str(mentioned)
-                    for mentioned in doc.get("mentions", [])
+                    for mentioned in mentions
                     if mentioned is not None
                 ],
             }
