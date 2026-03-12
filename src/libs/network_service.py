@@ -54,7 +54,7 @@ def fetch_network_documents(
         channel_id=channel_id,
     )
 
-    return list(
+    docs = list(
         db.messages.find(
             query,
             {
@@ -67,6 +67,54 @@ def fetch_network_documents(
         .sort("timestamp", -1)
         .limit(limit)
     )
+
+    existing_message_ids = {
+        str(doc["message_id"])
+        for doc in docs
+        if doc.get("message_id") is not None
+    }
+    missing_reply_target_ids = {
+        str(doc["reply_to"])
+        for doc in docs
+        if doc.get("reply_to") is not None
+        and str(doc["reply_to"]) not in existing_message_ids
+    }
+
+    if not missing_reply_target_ids:
+        return docs
+
+    reply_target_docs = db.messages.find(
+        {
+            "guild_id": guild_id,
+            "message_id": {"$in": list(missing_reply_target_ids)},
+        },
+        {
+            "message_id": 1,
+            "user_id": 1,
+        },
+    )
+
+    for reply_target_doc in reply_target_docs:
+        message_id = reply_target_doc.get("message_id")
+
+        if message_id is None:
+            continue
+
+        normalized_message_id = str(message_id)
+        if normalized_message_id in existing_message_ids:
+            continue
+
+        docs.append(
+            {
+                "message_id": normalized_message_id,
+                "user_id": reply_target_doc.get("user_id"),
+                "reply_to": None,
+                "mentions": [],
+            }
+        )
+        existing_message_ids.add(normalized_message_id)
+
+    return docs
 
 
 def normalize_network_documents(docs: list[dict]) -> tuple[list[dict], int]:
@@ -189,33 +237,35 @@ def generate_conversation_network(
         raise ValueError("表示条件を満たす会話エッジがありません")
 
     positions = nx.kamada_kawai_layout(graph)
-    plt.figure(figsize=(24, 24))
-
-    weights = [graph[node_u][node_v]["weight"] for node_u, node_v in graph.edges()]
-
-    nx.draw(
-        graph,
-        positions,
-        node_color="#A0CBE2",
-        node_size=5000,
-        width=[weight * 0.8 for weight in weights],
-        with_labels=False,
-    )
-
-    texts = nx.draw_networkx_labels(
-        graph,
-        positions,
-        labels,
-        font_size=128,
-    )
-
-    for text in texts.values():
-        text.set_fontproperties(font_prop)
-
+    figure = plt.figure(figsize=(24, 24))
     buffer = io.BytesIO()
-    plt.axis("off")
-    plt.savefig(buffer, format="png", bbox_inches="tight")
-    plt.close()
-    buffer.seek(0)
+
+    try:
+        weights = [graph[node_u][node_v]["weight"] for node_u, node_v in graph.edges()]
+
+        nx.draw(
+            graph,
+            positions,
+            node_color="#A0CBE2",
+            node_size=5000,
+            width=[weight * 0.8 for weight in weights],
+            with_labels=False,
+        )
+
+        texts = nx.draw_networkx_labels(
+            graph,
+            positions,
+            labels,
+            font_size=128,
+        )
+
+        for text in texts.values():
+            text.set_fontproperties(font_prop)
+
+        plt.axis("off")
+        figure.savefig(buffer, format="png", bbox_inches="tight")
+        buffer.seek(0)
+    finally:
+        plt.close(figure)
 
     return buffer

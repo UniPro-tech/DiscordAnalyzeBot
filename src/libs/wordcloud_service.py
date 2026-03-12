@@ -3,8 +3,7 @@ from datetime import datetime, timedelta
 import io
 from typing import Optional
 
-import matplotlib.pyplot as plt
-from wordcloud import WordCloud
+from libs.visualization_common import resolve_font_path
 
 from libs.text_processing import (
     STOP_WORDS,
@@ -15,7 +14,8 @@ from libs.text_processing import (
     join_message_content,
     normalize_text,
 )
-from libs.visualization_common import resolve_font_path
+import matplotlib.pyplot as plt
+from wordcloud import WordCloud
 
 
 PMI_THRESHOLD = 3
@@ -274,13 +274,15 @@ def generate_wordcloud_image(db, text: str) -> io.BytesIO:
     ).generate(words)
 
     figure = plt.figure(figsize=(15, 10))
-    plt.imshow(wordcloud)
-    plt.axis("off")
-
     buffer = io.BytesIO()
-    figure.savefig(buffer, format="png", bbox_inches="tight")
-    plt.close(figure)
-    buffer.seek(0)
+
+    try:
+        plt.imshow(wordcloud)
+        plt.axis("off")
+        figure.savefig(buffer, format="png", bbox_inches="tight")
+        buffer.seek(0)
+    finally:
+        plt.close(figure)
 
     return buffer
 

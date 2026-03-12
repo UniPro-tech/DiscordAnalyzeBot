@@ -121,10 +121,22 @@ async def on_message(message):
     if message.guild is None:
         return
 
-    if is_channel_opted_out(bot.db, str(message.guild.id), str(message.channel.id)):
+    guild_id = str(message.guild.id)
+    channel_id = str(message.channel.id)
+    user_id = str(message.author.id)
+
+    def collect_opt_out_flags() -> tuple[bool, bool]:
+        return (
+            is_channel_opted_out(bot.db, guild_id, channel_id),
+            is_user_opted_out(bot.db, user_id),
+        )
+
+    channel_opted_out, user_opted_out = await asyncio.to_thread(collect_opt_out_flags)
+
+    if channel_opted_out:
         return
 
-    if is_user_opted_out(bot.db, str(message.author.id)):
+    if user_opted_out:
         return
 
     roles = message.author.roles
@@ -138,11 +150,11 @@ async def on_message(message):
 
     data = {
         "message_id": str(message.id),
-        "guild_id": str(message.guild.id),
+        "guild_id": guild_id,
         "guild_name": message.guild.name,
-        "user_id": str(message.author.id),
+        "user_id": user_id,
         "username": str(message.author),
-        "channel_id": str(message.channel.id),
+        "channel_id": channel_id,
         "channel_name": str(message.channel),
         "content": message.content,
         "timestamp": message.created_at.isoformat(),
@@ -155,7 +167,7 @@ async def on_message(message):
         "url_count": len(message.content.split("http")),
     }
 
-    bot.db.messages.insert_one(data)
+    await asyncio.to_thread(bot.db.messages.insert_one, data)
 
     await bot.process_commands(message)
 

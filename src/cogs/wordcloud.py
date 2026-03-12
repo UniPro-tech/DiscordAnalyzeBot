@@ -558,38 +558,50 @@ class WordCloud(commands.Cog):
 
     @tasks.loop(minutes=10)
     async def background_learn(self):
-        last_id = self.bot.db.meta.find_one({"_id": "last_learn_id"})
-        docs = fetch_learning_documents(
-            self.bot.db,
-            last_id["value"] if last_id else None,
-        )
+        try:
+            last_id = self.bot.db.meta.find_one({"_id": "last_learn_id"})
+            docs = fetch_learning_documents(
+                self.bot.db,
+                last_id["value"] if last_id else None,
+            )
 
-        if not docs:
-            return
+            if not docs:
+                return
 
-        for doc in docs:
-            try:
-                text = build_wordcloud_source_text([doc])
-                learn_from_text(self.bot.db, text)
-                update_last_learn_id(self.bot.db, doc["_id"])
-            except Exception as error:
-                print(
-                    "Error while learning message "
-                    f"{doc.get('_id')}: {error}"
-                )
-                break
+            for doc in docs:
+                try:
+                    text = build_wordcloud_source_text([doc])
+                    learn_from_text(self.bot.db, text)
+                    update_last_learn_id(self.bot.db, doc["_id"])
+                except Exception as error:
+                    print(
+                        "Error while learning message "
+                        f"{doc.get('_id')}: {error}"
+                    )
+                    break
+        except Exception as error:
+            print(f"Error in background_learn loop: {error}")
 
     @background_learn.before_loop
     async def before_background_learn(self):
-        await self.bot.wait_until_ready()
+        try:
+            await self.bot.wait_until_ready()
+        except Exception as error:
+            print(f"Error preparing background_learn loop: {error}")
 
     @tasks.loop(hours=24)
     async def update_compounds_task(self):
-        update_compounds(self.bot.db)
+        try:
+            update_compounds(self.bot.db)
+        except Exception as error:
+            print(f"Error in update_compounds_task loop: {error}")
 
     @update_compounds_task.before_loop
     async def before_update_compounds_task(self):
-        await self.bot.wait_until_ready()
+        try:
+            await self.bot.wait_until_ready()
+        except Exception as error:
+            print(f"Error preparing update_compounds_task loop: {error}")
 
 
 async def setup(bot: commands.Bot):

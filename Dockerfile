@@ -12,13 +12,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   cargo \
   && rm -rf /var/lib/apt/lists/*
 
-# For Debian/Ubuntu based images
-RUN apt-get update && apt-get install -y \
-  build-essential \
-  curl \
-  && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-ENV PATH="/root/.cargo/bin:${PATH}"
-
 # 2. 環境設定
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
