@@ -43,7 +43,7 @@ class About(commands.Cog):
             )
             embed.add_field(
                 name="Version",
-                value=f"v{__version__} (リリースノート: [GitHub](https://github.com/UniProject/analyze-bot/releases/tag/v{__version__} ))",
+                value=f"v{__version__} (リリースノート: [GitHub](https://github.com/UniProject/DiscordAnalyzeBot/releases/tag/v{__version__} ))",
                 inline=False,
             )
             await interaction.response.send_message(embed=embed)
