@@ -195,10 +195,26 @@ def learn_from_texts(db, texts: list[str], workers: int = 4) -> None:
     unigram_agg: Counter = Counter()
     ngram_agg: Counter = Counter()
 
-    with ThreadPoolExecutor(max_workers=workers) as ex:
-        for u_cnt, n_cnt in ex.map(_count_tokens_for_text, texts):
+    def _aggregate_sequential() -> None:
+        for text in texts:
+            u_cnt, n_cnt = _count_tokens_for_text(text)
             unigram_agg.update(u_cnt)
             ngram_agg.update(n_cnt)
+
+    if workers <= 1:
+        _aggregate_sequential()
+    else:
+        try:
+            with ThreadPoolExecutor(max_workers=workers) as ex:
+                for u_cnt, n_cnt in ex.map(_count_tokens_for_text, texts):
+                    unigram_agg.update(u_cnt)
+                    ngram_agg.update(n_cnt)
+        except RuntimeError as error:
+            # SudachiPy tokenizerはスレッドセーフではないため、環境によっては
+            # 並列実行時に "Already borrowed" が発生する。その場合は逐次処理へフォールバックする。
+            if "Already borrowed" not in str(error):
+                raise
+            _aggregate_sequential()
 
     # 一括更新のためのUpdateOneオペレーションを作成して、DBに反映する。
     unigram_ops = [
@@ -492,6 +508,14 @@ def update_last_learn_id(db, last_id) -> None:
         {"$set": {"value": last_id}},
         upsert=True,
     )
+
+
+def reset_learning_state(db) -> None:
+    db.unigrams.delete_many({})
+    db.ngrams.delete_many({})
+    db.compounds.delete_many({})
+    db.meta.delete_one({"_id": "last_learn_id"})
+    clear_extract_tokens_cache()
 
 
 def get_frequency_label(frequency: str) -> str:

@@ -288,6 +288,7 @@ async def main():
     await bot.load_extension("cogs.about")
     await bot.load_extension("cogs.optout")
     await bot.load_extension("cogs.network")
+    await bot.load_extension("cogs.admin")
 
     async with bot:
         await bot.start(TOKEN)
