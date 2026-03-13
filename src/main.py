@@ -10,6 +10,7 @@ from libs.message_store import (
     delete_messages_by_ids,
     get_opt_out_flags,
 )
+from libs.text_processing import extract_tokens, normalize_text
 
 # Add src directory to sys.path for imports
 sys.path.insert(0, os.path.dirname(__file__))
@@ -163,7 +164,13 @@ async def on_message(message):
         "url_count": len(message.content.split("http")),
     }
 
-    await asyncio.to_thread(bot.db.messages.insert_one, data)
+    def _save_message(d: dict) -> None:
+        content = d.get("content", "")
+        if content:
+            d["tokens"] = list(extract_tokens(normalize_text(content)))
+        bot.db.messages.insert_one(d)
+
+    await asyncio.to_thread(_save_message, data)
 
     await bot.process_commands(message)
 

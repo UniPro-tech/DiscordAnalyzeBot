@@ -15,6 +15,7 @@ from libs.wordcloud_service import (
     generate_wordcloud_image,
     get_frequency_label,
     learn_from_texts,
+    migrate_message_tokens,
     parse_period_days,
     parse_schedule_time,
     should_execute_schedule,
@@ -41,6 +42,19 @@ class WordCloud(commands.Cog):
         print("[WordCloud] Cog loaded. Updating compounds database...")
         await asyncio.to_thread(update_compounds, self.bot.db)
         print("[WordCloud] Compounds database updated on startup.")
+        asyncio.create_task(self._migrate_tokens_background())
+
+    async def _migrate_tokens_background(self) -> None:
+        """tokensフィールドがない旧メッセージをバックグラウンドで一括トークン化する。"""
+        try:
+            print("[WordCloud] Starting token migration for existing messages...")
+            count = await asyncio.to_thread(migrate_message_tokens, self.bot.db)
+            if count > 0:
+                print(f"[WordCloud] Token migration complete: {count} messages updated.")
+            else:
+                print("[WordCloud] Token migration: all messages already have tokens.")
+        except Exception as e:
+            print(f"[WordCloud] Token migration error: {e}")
 
     def cog_unload(self):
         if self.check_scheduled_wordclouds.is_running():
@@ -156,7 +170,8 @@ class WordCloud(commands.Cog):
         await interaction.response.defer(thinking=True)
 
         try:
-            docs = fetch_wordcloud_documents(
+            docs = await asyncio.to_thread(
+                fetch_wordcloud_documents,
                 self.bot.db,
                 str(interaction.guild_id),
                 period_days=period_days,
@@ -181,10 +196,12 @@ class WordCloud(commands.Cog):
             await interaction.followup.send(embed=embed)
             return
 
-        raw_text = build_wordcloud_source_text(docs)
-
         try:
-            image_buffer = generate_wordcloud_image(db=self.bot.db, text=raw_text)
+            image_buffer = await asyncio.to_thread(
+                generate_wordcloud_image,
+                self.bot.db,
+                docs,
+            )
         except ValueError:
             embed = embed_helper.create_warning_embed(
                 title="語彙不足",
@@ -543,13 +560,11 @@ class WordCloud(commands.Cog):
                 )
                 return
 
-            raw_text = build_wordcloud_source_text(docs)
-
             try:
                 image_buffer = await asyncio.to_thread(
                     generate_wordcloud_image,
                     self.bot.db,
-                    raw_text,
+                    docs,
                 )
             except (ValueError, RuntimeError) as error:
                 print(f"Error generating wordcloud: {error}")

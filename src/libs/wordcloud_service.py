@@ -94,7 +94,7 @@ def fetch_wordcloud_documents(
     )
 
     return list(
-        db.messages.find(query, {"content": 1}).sort("timestamp", -1).limit(limit)
+        db.messages.find(query, {"content": 1, "tokens": 1}).sort("timestamp", -1).limit(limit)
     )
 
 
@@ -345,15 +345,29 @@ def build_wordcloud_source_text(docs: list[dict]) -> str:
     return join_message_content(docs)
 
 
-def generate_wordcloud_image(db, text: str) -> io.BytesIO:
+def build_token_list_from_docs(docs: list[dict]) -> list[str]:
+    """メッセージドキュメントのリストからトークンリストを構築する。
+    tokensフィールドが存在する場合はそれを使用し、存在しない場合はcontentからSudachiで抽出する（旧メッセージへのフォールバック）。"""
+    all_tokens: list[str] = []
+    for doc in docs:
+        stored = doc.get("tokens")
+        if stored:
+            all_tokens.extend(stored)
+        else:
+            content = (doc.get("content") or "").strip()
+            if content:
+                all_tokens.extend(extract_tokens(normalize_text(content)))
+    return all_tokens
+
+
+def generate_wordcloud_image(db, docs: list[dict]) -> io.BytesIO:
     font_path = resolve_font_path()
 
     if font_path is None:
         raise RuntimeError("WordCloudフォントが見つかりません")
 
-    normalized_text = normalize_text(text)
     compounds = load_compounds(db)
-    tokens = apply_learned_compounds(extract_tokens(normalized_text), compounds)
+    tokens = apply_learned_compounds(build_token_list_from_docs(docs), compounds)
     words = " ".join(tokens)
 
     if not words.strip():
@@ -486,3 +500,29 @@ def get_frequency_label(frequency: str) -> str:
         "weekly": "ウィークリー",
         "monthly": "マンスリー",
     }.get(frequency, frequency)
+
+
+def migrate_message_tokens(db, batch_size: int = 500) -> int:
+    """起動時マイグレーション: tokensフィールドが未付与のメッセージをバッチ処理して一括保存する。"""
+    total = 0
+    query = {"tokens": {"$exists": False}, "content": {"$type": "string", "$ne": ""}}
+
+    while True:
+        docs = list(db.messages.find(query, {"_id": 1, "content": 1}).limit(batch_size))
+        if not docs:
+            break
+
+        ops = [
+            UpdateOne(
+                {"_id": doc["_id"]},
+                {"$set": {"tokens": extract_tokens(normalize_text(doc["content"]))}},
+            )
+            for doc in docs
+            if (doc.get("content") or "").strip()
+        ]
+
+        if ops:
+            db.messages.bulk_write(ops, ordered=False)
+            total += len(ops)
+
+    return total
