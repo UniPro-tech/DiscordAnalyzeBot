@@ -90,9 +90,9 @@ async def _get_status_messages():
     guild_count = len(bot.guilds)
 
     return [
-        f"{messages_count:,} 件のメッセージを収集中",
+        f"{messages_count:,} 件のメッセージを分析中",
         f"{guild_count:,} サーバーに参加中",
-        f"{collected_user_count:,} ユーザー分を収集中",
+        f"{collected_user_count:,} ユーザー分を分析中",
     ]
 
 
