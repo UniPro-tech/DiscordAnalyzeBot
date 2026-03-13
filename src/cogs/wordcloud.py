@@ -34,26 +34,7 @@ class WordCloud(commands.Cog):
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self._startup_task_status_logged = False
-        self._startup_task_reporter: asyncio.Task | None = None
-        self._start_background_task(
-            self.check_scheduled_wordclouds,
-            "check_scheduled_wordclouds",
-            "1 minute",
-        )
-        self._start_background_task(
-            self.background_learn,
-            "background_learn",
-            "10 minutes",
-        )
-        self._start_background_task(
-            self.update_compounds_task,
-            "update_compounds_task",
-            "24 hours",
-        )
-        self._startup_task_reporter = asyncio.create_task(
-            self._log_background_task_status_on_ready()
-        )
+        self._background_tasks_started = False
 
     async def cog_load(self) -> None:
         """Update compounds when the cog loads."""
@@ -62,11 +43,12 @@ class WordCloud(commands.Cog):
         print("[WordCloud] Compounds database updated on startup.")
 
     def cog_unload(self):
-        self.check_scheduled_wordclouds.cancel()
-        self.background_learn.cancel()
-        self.update_compounds_task.cancel()
-        if self._startup_task_reporter is not None:
-            self._startup_task_reporter.cancel()
+        if self.check_scheduled_wordclouds.is_running():
+            self.check_scheduled_wordclouds.cancel()
+        if self.background_learn.is_running():
+            self.background_learn.cancel()
+        if self.update_compounds_task.is_running():
+            self.update_compounds_task.cancel()
 
     def _start_background_task(
         self,
@@ -83,13 +65,27 @@ class WordCloud(commands.Cog):
         task_loop.start()
         print(f"[WordCloud] Started background task '{task_name}' ({interval_label}).")
 
-    async def _log_background_task_status_on_ready(self) -> None:
-        await self.bot.wait_until_ready()
-
-        if self._startup_task_status_logged:
+    @commands.Cog.listener()
+    async def on_ready(self) -> None:
+        if self._background_tasks_started:
             return
 
-        self._startup_task_status_logged = True
+        self._start_background_task(
+            self.check_scheduled_wordclouds,
+            "check_scheduled_wordclouds",
+            "1 minute",
+        )
+        self._start_background_task(
+            self.background_learn,
+            "background_learn",
+            "10 minutes",
+        )
+        self._start_background_task(
+            self.update_compounds_task,
+            "update_compounds_task",
+            "24 hours",
+        )
+        self._background_tasks_started = True
         self._log_background_task_status()
 
     def _log_background_task_status(self) -> None:
