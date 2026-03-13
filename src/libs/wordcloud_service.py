@@ -126,7 +126,8 @@ def learn_from_text(db, text: str) -> None:
     token_entries = extract_tokens_with_indices(text)
     tokens = [word for word, _ in token_entries]
 
-    for token in tokens:
+    # 同一メッセージ内での繰り返しスパムを抑制するため、1トークンにつき1回だけ学習する。
+    for token in set(tokens):
         save_unigram(db, token)
 
     for ngram_size in (2, 3):
@@ -134,11 +135,18 @@ def learn_from_text(db, text: str) -> None:
             window = token_entries[index : index + ngram_size]
 
             # Keep only truly adjacent tokens in original text.
-            if all(
+            if not all(
                 window[pos + 1][1] - window[pos][1] == 1
                 for pos in range(len(window) - 1)
             ):
-                save_ngram(db, tuple(word for word, _ in window))
+                continue
+
+            # 同じ単語が繰り返されるスパムngramはスキップ。
+            ngram_words = [word for word, _ in window]
+            if len(set(ngram_words)) < len(ngram_words):
+                continue
+
+            save_ngram(db, tuple(ngram_words))
 
 
 def _compute_bigram_pmi(db, left_word: str, right_word: str, total: int) -> float | None:
