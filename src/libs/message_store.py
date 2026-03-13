@@ -18,6 +18,19 @@ def is_user_opted_out(db, user_id: str) -> bool:
     return opt_out.get("opt_out", False)
 
 
+def get_opt_out_flags(
+    db,
+    guild_id: str,
+    channel_id: str,
+    user_id: str,
+) -> tuple[bool, bool]:
+    """オプトアウトフラグをまとめて取得するユーティリティ関数。DBアクセスが伴うため、必要に応じて非同期で呼び出すこと。"""
+    return (
+        is_channel_opted_out(db, guild_id, channel_id),
+        is_user_opted_out(db, user_id),
+    )
+
+
 def normalize_message_ids(message_ids) -> list[str]:
     return [str(message_id) for message_id in message_ids]
 

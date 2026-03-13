@@ -1,6 +1,7 @@
 import math
 import re
 import unicodedata
+from functools import lru_cache
 
 from sudachipy import dictionary, tokenizer
 
@@ -49,21 +50,31 @@ STOP_WORDS = {
 tokenizer_obj = dictionary.Dictionary().create()
 MODE = tokenizer.Tokenizer.SplitMode.C
 SINGLE_HIRAGANA_PATTERN = re.compile(r"^[ぁ-ゖ]$")
+URL_PATTERN = re.compile(r"https?://\S+")
+MENTION_PATTERN = re.compile(r"<@!?\d+>")
+CHANNEL_PATTERN = re.compile(r"<#\d+>")
+EMOJI_PATTERN = re.compile(r"<a?:\w+:\d+>")
+CODE_BLOCK_PATTERN = re.compile(r"```.*?```", flags=re.DOTALL)
+INLINE_CODE_PATTERN = re.compile(r"`.*?`")
+STRIKETHROUGH_PATTERN = re.compile(r"~~.*?~~")
+SPOILER_PATTERN = re.compile(r"\|\|.*?\|\|")
+WWW_PATTERN = re.compile(r"[wｗ]{2,}")
+MULTISPACE_PATTERN = re.compile(r"\s+")
 
 
 def normalize_text(text: str) -> str:
     text = text.replace("\n", " ")
 
-    text = re.sub(r"https?://\S+", "", text)
-    text = re.sub(r"<@!?\d+>", "", text)
-    text = re.sub(r"<#\d+>", "", text)
-    text = re.sub(r"<a?:\w+:\d+>", "", text)
-    text = re.sub(r"```.*?```", "", text, flags=re.DOTALL)
-    text = re.sub(r"`.*?`", "", text)
-    text = re.sub(r"~~.*?~~", "", text)
-    text = re.sub(r"\|\|.*?\|\|", "", text)
-    text = re.sub(r"[wｗ]{2,}", "www", text)
-    text = re.sub(r"\s+", " ", text)
+    text = URL_PATTERN.sub("", text)
+    text = MENTION_PATTERN.sub("", text)
+    text = CHANNEL_PATTERN.sub("", text)
+    text = EMOJI_PATTERN.sub("", text)
+    text = CODE_BLOCK_PATTERN.sub("", text)
+    text = INLINE_CODE_PATTERN.sub("", text)
+    text = STRIKETHROUGH_PATTERN.sub("", text)
+    text = SPOILER_PATTERN.sub("", text)
+    text = WWW_PATTERN.sub("www", text)
+    text = MULTISPACE_PATTERN.sub(" ", text)
 
     return unicodedata.normalize("NFKC", text).strip()
 
@@ -89,7 +100,8 @@ def _is_target_token(word: str, pos: tuple[str, ...]) -> bool:
     return False
 
 
-def extract_tokens(text: str) -> list[str]:
+@lru_cache(maxsize=4096)
+def _extract_tokens_cached(text: str) -> tuple[str, ...]:
     tokens = tokenizer_obj.tokenize(text, MODE)
     words = []
 
@@ -100,7 +112,15 @@ def extract_tokens(text: str) -> list[str]:
         if _is_target_token(word, pos):
             words.append(word)
 
-    return words
+    return tuple(words)
+
+
+def extract_tokens(text: str) -> list[str]:
+    return list(_extract_tokens_cached(text))
+
+
+def clear_extract_tokens_cache() -> None:
+    _extract_tokens_cached.cache_clear()
 
 
 def extract_tokens_with_indices(text: str) -> list[tuple[str, int]]:

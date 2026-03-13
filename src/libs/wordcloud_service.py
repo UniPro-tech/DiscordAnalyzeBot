@@ -2,12 +2,16 @@ from calendar import monthrange
 from datetime import datetime, timedelta
 import io
 from typing import Optional
+from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
+from pymongo import UpdateOne
 
 from libs.visualization_common import resolve_font_path
 
 from libs.text_processing import (
     STOP_WORDS,
     apply_learned_compounds,
+    clear_extract_tokens_cache,
     compute_pmi,
     extract_tokens,
     extract_tokens_with_indices,
@@ -149,6 +153,70 @@ def learn_from_text(db, text: str) -> None:
             save_ngram(db, tuple(ngram_words))
 
 
+def _count_tokens_for_text(text: str) -> tuple[Counter, Counter]:
+    """ngramのPMI計算のために、テキストからunigramとngramの頻度を数える。DBアクセスは伴わないので、並列化して高速化する。"""
+    unigram_counter: Counter = Counter()
+    ngram_counter: Counter = Counter()
+
+    token_entries = extract_tokens_with_indices(text)
+    tokens = [word for word, _ in token_entries]
+
+    for token in set(tokens):
+        unigram_counter[token] += 1
+
+    for ngram_size in (2, 3):
+        for index in range(len(token_entries) - ngram_size + 1):
+            window = token_entries[index : index + ngram_size]
+
+            if not all(
+                window[pos + 1][1] - window[pos][1] == 1
+                for pos in range(len(window) - 1)
+            ):
+                continue
+
+            ngram_words = [word for word, _ in window]
+            if len(set(ngram_words)) < len(ngram_words):
+                continue
+
+            ngram_counter[tuple(ngram_words)] += 1
+
+    return unigram_counter, ngram_counter
+
+
+def learn_from_texts(db, texts: list[str], workers: int = 4) -> None:
+    """
+    ある程度の量のテキストを学習する際に、1テキストずつDBに更新をかけるとオーバーヘッドが大きいので、ある程度まとめて集計してから一括で更新する。
+    """
+    if not texts:
+        return
+
+    # CPU負荷の高いトークン化とPMI計算は並列化して高速化する。DBへの更新は一括で行うため、スレッドセーフな集計を行うためにCounterを使用する。
+    # multiprocessing.Poolも試したが、pickleの制約でDBクライアントを渡せないため、ThreadPoolExecutorで代替する。
+    unigram_agg: Counter = Counter()
+    ngram_agg: Counter = Counter()
+
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        for u_cnt, n_cnt in ex.map(_count_tokens_for_text, texts):
+            unigram_agg.update(u_cnt)
+            ngram_agg.update(n_cnt)
+
+    # 一括更新のためのUpdateOneオペレーションを作成して、DBに反映する。
+    unigram_ops = [
+        UpdateOne({"word": token}, {"$inc": {"count": cnt}}, upsert=True)
+        for token, cnt in unigram_agg.items()
+    ]
+    ngram_ops = [
+        UpdateOne({"ngram": list(ngram)}, {"$inc": {"count": cnt}}, upsert=True)
+        for ngram, cnt in ngram_agg.items()
+    ]
+
+    if unigram_ops:
+        db.unigrams.bulk_write(unigram_ops, ordered=False)
+
+    if ngram_ops:
+        db.ngrams.bulk_write(ngram_ops, ordered=False)
+
+
 def _compute_bigram_pmi(db, left_word: str, right_word: str, total: int) -> float | None:
     bigram_doc = db.ngrams.find_one({"ngram": [left_word, right_word]})
 
@@ -175,76 +243,98 @@ def _compute_bigram_pmi(db, left_word: str, right_word: str, total: int) -> floa
 
 
 def update_compounds(db) -> None:
+    # 全unigramの総数を取得。PMI計算で参照するため。
     total = get_total_unigram_count(db)
 
     if total == 0:
         return
 
+    # 全unigramをロードして、PMI計算で頻度参照するための辞書を作る。
+    unigram_counts: dict[str, int] = {
+        doc["word"]: doc["count"] for doc in db.unigrams.find({}, {"word": 1, "count": 1})
+    }
+
+    # ngramを全件ロードして、PMI計算して、条件を満たすものをDBに保存する。
+    ngram_docs = list(db.ngrams.find({}))
+
     accepted_bigrams: dict[tuple[str, str], float] = {}
 
-    for doc in db.ngrams.find():
+    def _process_ngram_doc(doc):
         ngram_words = doc["ngram"]
         count_xy = doc["count"]
         ngram_size = len(ngram_words)
 
         if count_xy < COUNT_THRESHOLD:
-            continue
-
-        if ngram_size not in (2, 3):
-            continue
+            return None
 
         if ngram_size == 2:
             w1, w2 = ngram_words
-            pmi = _compute_bigram_pmi(db, w1, w2, total)
+            ux = unigram_counts.get(w1)
+            uy = unigram_counts.get(w2)
+            if ux is None or uy is None:
+                return None
 
+            pmi = compute_pmi(count_xy, ux, uy, total)
             if pmi is None:
+                return None
+
+            return ("bigram", (w1, w2), pmi)
+
+        if ngram_size == 3:
+            w1, w2, w3 = ngram_words
+            ux = unigram_counts.get(w1)
+            uy = unigram_counts.get(w2)
+            uz = unigram_counts.get(w3)
+            if ux is None or uy is None or uz is None:
+                return None
+
+            left_doc = db.ngrams.find_one({"ngram": [w1, w2]})
+            right_doc = db.ngrams.find_one({"ngram": [w2, w3]})
+            if not left_doc or not right_doc:
+                return None
+
+            left_pmi = compute_pmi(left_doc["count"], ux, uy, total)
+            right_pmi = compute_pmi(right_doc["count"], uy, uz, total)
+
+            if left_pmi is None or right_pmi is None:
+                return None
+
+            pmi = min(left_pmi, right_pmi)
+            return ("trigram", tuple(ngram_words), pmi)
+
+        return None
+
+    # PMI計算はDBアクセスも伴うので、並列化して高速化する。
+    with ThreadPoolExecutor() as ex:
+        for res in ex.map(_process_ngram_doc, ngram_docs):
+            if res is None:
                 continue
 
-            if pmi >= PMI_THRESHOLD:
-                db.compounds.update_one(
-                    {"word": w1 + w2},
-                    {"$set": {"pmi": pmi}},
-                    upsert=True,
-                )
-                accepted_bigrams[(w1, w2)] = pmi
+            kind, key, pmi = res
+            if kind == "bigram":
+                w1, w2 = key
+                if pmi >= PMI_THRESHOLD:
+                    db.compounds.update_one({"word": w1 + w2}, {"$set": {"pmi": pmi}}, upsert=True)
+                    accepted_bigrams[(w1, w2)] = pmi
+            else:
+                if pmi >= PMI_THRESHOLD:
+                    db.compounds.update_one({"word": "".join(key)}, {"$set": {"pmi": pmi}}, upsert=True)
 
-            continue
-
-        w1, w2, w3 = ngram_words
-        left_pmi = _compute_bigram_pmi(db, w1, w2, total)
-        right_pmi = _compute_bigram_pmi(db, w2, w3, total)
-
-        if left_pmi is None or right_pmi is None:
-            continue
-
-        pmi = min(left_pmi, right_pmi)
-
-        if pmi >= PMI_THRESHOLD:
-            db.compounds.update_one(
-                {"word": "".join(ngram_words)},
-                {"$set": {"pmi": pmi}},
-                upsert=True,
-            )
-
-    # Promote overlapping bigrams (A+B and B+C) to trigram compounds (A+B+C).
+    # 条件を満たすbigramの中で、さらに両側に同じbigramが条件を満たすものは、重複bigramを避けるために3-gramとしても保存する。
     bigrams_by_left: dict[str, list[tuple[str, float]]] = {}
 
     for (left_word, right_word), pmi in accepted_bigrams.items():
-        if left_word not in bigrams_by_left:
-            bigrams_by_left[left_word] = []
-
-        bigrams_by_left[left_word].append((right_word, pmi))
+        bigrams_by_left.setdefault(left_word, []).append((right_word, pmi))
 
     for (w1, w2), left_pmi in accepted_bigrams.items():
         for w3, right_pmi in bigrams_by_left.get(w2, []):
             trigram_pmi = min(left_pmi, right_pmi)
 
             if trigram_pmi >= PMI_THRESHOLD:
-                db.compounds.update_one(
-                    {"word": w1 + w2 + w3},
-                    {"$set": {"pmi": trigram_pmi}},
-                    upsert=True,
-                )
+                db.compounds.update_one({"word": w1 + w2 + w3}, {"$set": {"pmi": trigram_pmi}}, upsert=True)
+
+    # 学習の最後に、抽出トークンのキャッシュをクリアして、次回以降の抽出で新しい複合語を反映させる。
+    clear_extract_tokens_cache()
 
 
 def load_compounds(db) -> set[str]:

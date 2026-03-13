@@ -3,6 +3,7 @@ from zoneinfo import ZoneInfo
 
 from libs.wordcloud_service import (
     learn_from_text,
+    learn_from_texts,
     parse_schedule_time,
     should_execute_schedule,
     update_compounds,
@@ -78,11 +79,15 @@ class _DBStub:
 
 class _UnigramCollectionForUpdateStub:
     def __init__(self, docs):
+        self._docs = docs
         self._docs_by_word = {doc["word"]: doc for doc in docs}
         self._total = sum(doc["count"] for doc in docs)
 
     def aggregate(self, _pipeline):
         return iter([{"_id": None, "total": self._total}])
+
+    def find(self, *_args, **_kwargs):
+        return self._docs
 
     def find_one(self, query):
         return self._docs_by_word.get(query["word"])
@@ -93,7 +98,7 @@ class _NgramCollectionForUpdateStub:
         self._docs = docs
         self._docs_by_ngram = {tuple(doc["ngram"]): doc for doc in docs}
 
-    def find(self):
+    def find(self, *_args, **_kwargs):
         return self._docs
 
     def find_one(self, query):
@@ -113,6 +118,20 @@ class _UpdateCompoundsDBStub:
         self.unigrams = _UnigramCollectionForUpdateStub(unigram_docs)
         self.ngrams = _NgramCollectionForUpdateStub(ngram_docs)
         self.compounds = _CompoundsCollectionForUpdateStub()
+
+
+class _BulkCollectionStub:
+    def __init__(self):
+        self.bulk_calls = []
+
+    def bulk_write(self, operations, ordered=False):
+        self.bulk_calls.append((operations, ordered))
+
+
+class _BatchLearnDBStub:
+    def __init__(self):
+        self.unigrams = _BulkCollectionStub()
+        self.ngrams = _BulkCollectionStub()
 
 
 def test_learn_from_text_does_not_create_ngram_across_particle():
@@ -170,3 +189,21 @@ def test_update_compounds_promotes_overlapping_bigrams_to_trigram():
     assert "ミラノ風" in saved_words
     assert "風ドリア" in saved_words
     assert "ミラノ風ドリア" in saved_words
+
+
+def test_learn_from_texts_uses_bulk_write_and_aggregates_counts():
+    db = _BatchLearnDBStub()
+
+    learn_from_texts(db, ["経済社会問題", "経済社会問題"], workers=2)
+
+    assert len(db.unigrams.bulk_calls) == 1
+    assert len(db.ngrams.bulk_calls) == 1
+
+    unigram_ops = db.unigrams.bulk_calls[0][0]
+    unigram_counts = {
+        op._filter["word"]: op._doc["$inc"]["count"]
+        for op in unigram_ops
+    }
+    assert unigram_counts["経済"] == 2
+    assert unigram_counts["社会"] == 2
+    assert unigram_counts["問題"] == 2

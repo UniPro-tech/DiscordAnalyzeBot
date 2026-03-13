@@ -8,8 +8,7 @@ from discord.ext import commands, tasks
 from libs.message_store import (
     delete_guild_data,
     delete_messages_by_ids,
-    is_channel_opted_out,
-    is_user_opted_out,
+    get_opt_out_flags,
 )
 
 # Add src directory to sys.path for imports
@@ -126,10 +125,7 @@ async def on_message(message):
     user_id = str(message.author.id)
 
     def collect_opt_out_flags() -> tuple[bool, bool]:
-        return (
-            is_channel_opted_out(bot.db, guild_id, channel_id),
-            is_user_opted_out(bot.db, user_id),
-        )
+        return get_opt_out_flags(bot.db, guild_id, channel_id, user_id)
 
     channel_opted_out, user_opted_out = await asyncio.to_thread(collect_opt_out_flags)
 

@@ -1,5 +1,6 @@
 from libs.text_processing import (
     apply_learned_compounds,
+    clear_extract_tokens_cache,
     extract_tokens,
     extract_tokens_with_indices,
     normalize_text,
@@ -60,3 +61,43 @@ def test_extract_tokens_drops_taiku_noise_word():
 
 def test_extract_tokens_with_indices_keeps_original_positions():
     assert extract_tokens_with_indices("記憶の人間") == [("記憶", 0), ("人間", 2)]
+
+
+class _TokenStub:
+    def __init__(self, word: str, pos: tuple[str, ...]):
+        self._word = word
+        self._pos = pos
+
+    def part_of_speech(self):
+        return self._pos
+
+    def surface(self):
+        return self._word
+
+
+class _TokenizerStub:
+    def __init__(self):
+        self.calls = 0
+
+    def tokenize(self, _text, _mode):
+        self.calls += 1
+        return [
+            _TokenStub("参加者", ("名詞", "一般")),
+            _TokenStub("多く", ("名詞", "一般")),
+        ]
+
+
+def test_extract_tokens_cache_and_clear(monkeypatch):
+    import libs.text_processing as text_processing
+
+    tokenizer_stub = _TokenizerStub()
+    clear_extract_tokens_cache()
+    monkeypatch.setattr(text_processing, "tokenizer_obj", tokenizer_stub)
+
+    assert extract_tokens("same input") == ["参加者"]
+    assert extract_tokens("same input") == ["参加者"]
+    assert tokenizer_stub.calls == 1
+
+    clear_extract_tokens_cache()
+    assert extract_tokens("same input") == ["参加者"]
+    assert tokenizer_stub.calls == 2

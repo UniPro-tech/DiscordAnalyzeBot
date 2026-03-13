@@ -63,8 +63,11 @@ class Optout(commands.Cog):
             return
 
         try:
-            self.bot.db.user_settings.update_one(
-                {"user_id": user_id}, {"$set": {"opt_out": opt_out_value}}, upsert=True
+            await asyncio.to_thread(
+                self.bot.db.user_settings.update_one,
+                {"user_id": user_id},
+                {"$set": {"opt_out": opt_out_value}},
+                upsert=True,
             )
         except Exception as e:
             print(f"Error in optout command: {e}")
@@ -157,7 +160,8 @@ class Optout(commands.Cog):
             return
 
         try:
-            self.bot.db.channel_settings.update_one(
+            await asyncio.to_thread(
+                self.bot.db.channel_settings.update_one,
                 {"guild_id": guild_id, "channel_id": channel_id},
                 {"$set": {"opt_out": opt_out_value}},
                 upsert=True,

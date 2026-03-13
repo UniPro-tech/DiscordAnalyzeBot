@@ -14,7 +14,7 @@ from libs.wordcloud_service import (
     fetch_wordcloud_documents,
     generate_wordcloud_image,
     get_frequency_label,
-    learn_from_text,
+    learn_from_texts,
     parse_period_days,
     parse_schedule_time,
     should_execute_schedule,
@@ -58,7 +58,7 @@ class WordCloud(commands.Cog):
     async def cog_load(self) -> None:
         """Update compounds when the cog loads."""
         print("[WordCloud] Cog loaded. Updating compounds database...")
-        update_compounds(self.bot.db)
+        await asyncio.to_thread(update_compounds, self.bot.db)
         print("[WordCloud] Compounds database updated on startup.")
 
     def cog_unload(self):
@@ -267,12 +267,13 @@ class WordCloud(commands.Cog):
             return
 
         # 既存の設定をチェック
-        existing = self.bot.db.guild_settings.find_one(
+        existing = await asyncio.to_thread(
+            self.bot.db.guild_settings.find_one,
             {
                 "guild_id": str(interaction.guild_id),
                 "channel_id": str(channel.id),
                 "frequency": frequency.value,
-            }
+            },
         )
 
         if existing:
@@ -285,7 +286,8 @@ class WordCloud(commands.Cog):
 
         # 新しい設定を追加
         try:
-            self.bot.db.guild_settings.insert_one(
+            await asyncio.to_thread(
+                self.bot.db.guild_settings.insert_one,
                 {
                     "guild_id": str(interaction.guild_id),
                     "channel_id": str(channel.id),
@@ -293,7 +295,7 @@ class WordCloud(commands.Cog):
                     "schedule_time": f"{parsed_time[0]:02d}:{parsed_time[1]:02d}",
                     "enabled": True,
                     "last_executed": None,
-                }
+                },
             )
 
             embed = embed_helper.create_success_embed(
@@ -338,11 +340,13 @@ class WordCloud(commands.Cog):
             return
 
         try:
-            settings = list(
-                self.bot.db.guild_settings.find(
-                    {
-                        "guild_id": str(interaction.guild_id),
-                    }
+            settings = await asyncio.to_thread(
+                lambda: list(
+                    self.bot.db.guild_settings.find(
+                        {
+                            "guild_id": str(interaction.guild_id),
+                        }
+                    )
                 )
             )
 
@@ -438,12 +442,13 @@ class WordCloud(commands.Cog):
             return
 
         try:
-            result = self.bot.db.guild_settings.delete_one(
+            result = await asyncio.to_thread(
+                self.bot.db.guild_settings.delete_one,
                 {
                     "guild_id": str(interaction.guild_id),
                     "channel_id": str(channel.id),
                     "frequency": frequency.value,
-                }
+                },
             )
 
             if result.deleted_count == 0:
@@ -475,7 +480,9 @@ class WordCloud(commands.Cog):
 
         # 有効な設定を取得
         try:
-            settings = self.bot.db.guild_settings.find({"enabled": True})
+            settings = await asyncio.to_thread(
+                lambda: list(self.bot.db.guild_settings.find({"enabled": True}))
+            )
         except Exception as e:
             print(f"Error fetching scheduled wordcloud settings: {e}")
             return
@@ -521,22 +528,42 @@ class WordCloud(commands.Cog):
                 return
 
             try:
-                docs = fetch_wordcloud_documents(self.bot.db, guild_id)
+                docs = await asyncio.to_thread(
+                    fetch_wordcloud_documents,
+                    self.bot.db,
+                    guild_id,
+                )
             except Exception as error:
                 print(f"Database query error for scheduled wordcloud: {error}")
                 return
 
             if not docs:
-                update_last_executed(self.bot.db, guild_id, channel_id, frequency)
+                await asyncio.to_thread(
+                    update_last_executed,
+                    self.bot.db,
+                    guild_id,
+                    channel_id,
+                    frequency,
+                )
                 return
 
             raw_text = build_wordcloud_source_text(docs)
 
             try:
-                image_buffer = generate_wordcloud_image(db=self.bot.db, text=raw_text)
+                image_buffer = await asyncio.to_thread(
+                    generate_wordcloud_image,
+                    self.bot.db,
+                    raw_text,
+                )
             except (ValueError, RuntimeError) as error:
                 print(f"Error generating wordcloud: {error}")
-                update_last_executed(self.bot.db, guild_id, channel_id, frequency)
+                await asyncio.to_thread(
+                    update_last_executed,
+                    self.bot.db,
+                    guild_id,
+                    channel_id,
+                    frequency,
+                )
                 return
 
             embed = embed_helper.create_success_embed(
@@ -551,7 +578,13 @@ class WordCloud(commands.Cog):
                 file=discord.File(fp=image_buffer, filename="wordcloud.png"),
             )
 
-            update_last_executed(self.bot.db, guild_id, channel_id, frequency)
+            await asyncio.to_thread(
+                update_last_executed,
+                self.bot.db,
+                guild_id,
+                channel_id,
+                frequency,
+            )
 
         except Exception as e:
             print(f"Error executing scheduled wordcloud: {e}")
@@ -559,26 +592,21 @@ class WordCloud(commands.Cog):
     @tasks.loop(minutes=10)
     async def background_learn(self):
         try:
-            last_id = self.bot.db.meta.find_one({"_id": "last_learn_id"})
-            docs = fetch_learning_documents(
-                self.bot.db,
-                last_id["value"] if last_id else None,
-            )
+            def _learn_batch_sync() -> None:
+                last_id = self.bot.db.meta.find_one({"_id": "last_learn_id"})
+                docs = fetch_learning_documents(
+                    self.bot.db,
+                    last_id["value"] if last_id else None,
+                )
 
-            if not docs:
-                return
+                if not docs:
+                    return
 
-            for doc in docs:
-                try:
-                    text = build_wordcloud_source_text([doc])
-                    learn_from_text(self.bot.db, text)
-                    update_last_learn_id(self.bot.db, doc["_id"])
-                except Exception as error:
-                    print(
-                        "Error while learning message "
-                        f"{doc.get('_id')}: {error}"
-                    )
-                    break
+                texts = [build_wordcloud_source_text([doc]) for doc in docs]
+                learn_from_texts(self.bot.db, texts)
+                update_last_learn_id(self.bot.db, docs[-1]["_id"])
+
+            await asyncio.to_thread(_learn_batch_sync)
         except Exception as error:
             print(f"Error in background_learn loop: {error}")
 
@@ -592,7 +620,7 @@ class WordCloud(commands.Cog):
     @tasks.loop(hours=24)
     async def update_compounds_task(self):
         try:
-            update_compounds(self.bot.db)
+            await asyncio.to_thread(update_compounds, self.bot.db)
         except Exception as error:
             print(f"Error in update_compounds_task loop: {error}")
 
