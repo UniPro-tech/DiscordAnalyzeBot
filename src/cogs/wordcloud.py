@@ -675,7 +675,7 @@ class WordCloud(commands.Cog):
                         update_last_learn_cursor(self.bot.db, new_cursor)
                     elif legacy_last_id is not None and docs[-1].get("_id") is not None:
                         update_last_learn_id(self.bot.db, docs[-1]["_id"])
-                except Exception as e:
+                except Exception:
                     import traceback
 
                     print("[WordCloud DEBUG] Exception inside _learn_batch_sync:")
