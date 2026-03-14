@@ -7,18 +7,33 @@ def _is_clickhouse(db) -> bool:
     backend = getattr(db, "backend", None)
     if backend == "clickhouse":
         return True
+    # If this is a storage wrapper (MongoDatabase / HybridDatabase), prefer
+    # using its explicit backend attribute instead of probing methods which
+    # may trigger pymongo dynamic attribute access returning Collection
+    # objects.
+    if hasattr(db, "raw_db") or hasattr(db, "db_mongo") or hasattr(db, "db_clickhouse"):
+        return False
 
-    # Avoid triggering pymongo's dynamic attribute access (which returns
-    # Collection objects) by checking for callables instead of just
-    # attribute existence.
+    # Otherwise, detect a raw ClickHouse client by looking for the expected
+    # callable methods. Avoid treating pymongo Collection objects as ClickHouse
+    # by checking the attribute's class module.
+    def _is_callable_nonpymongo(obj):
+        if not callable(obj):
+            return False
+        cls = getattr(obj, "__class__", None)
+        mod = getattr(cls, "__module__", "") if cls is not None else ""
+        if mod.startswith("pymongo"):
+            return False
+        return True
+
     q = getattr(db, "query_dicts", None)
-    if callable(q):
+    if _is_callable_nonpymongo(q):
         return True
     s = getattr(db, "query_scalar", None)
-    if callable(s):
+    if _is_callable_nonpymongo(s):
         return True
     ins = getattr(db, "insert_rows", None)
-    if callable(ins):
+    if _is_callable_nonpymongo(ins):
         return True
 
     return False
