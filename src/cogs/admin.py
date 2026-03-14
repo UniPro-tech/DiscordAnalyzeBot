@@ -118,7 +118,7 @@ class Admin(commands.Cog):
         )
         await interaction.followup.send(embed=embed, ephemeral=True)
 
-    migrate_group = admin_group.Group(
+    migrate_group = commands.Group(
         name="migrate",
         description="マイグレーション関連のコマンド",
     )
