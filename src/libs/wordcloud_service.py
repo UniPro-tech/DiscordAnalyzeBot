@@ -503,13 +503,15 @@ def build_token_list_from_docs(docs: list[dict]) -> list[str]:
     return all_tokens
 
 
-def generate_wordcloud_image(db, docs: list[dict]) -> io.BytesIO:
+def generate_wordcloud_image(db, docs: list[dict], *, compounds: set[str] | None = None) -> io.BytesIO:
     font_path = resolve_font_path()
 
     if font_path is None:
         raise RuntimeError("WordCloudフォントが見つかりません")
 
-    compounds = load_compounds(db)
+    if compounds is None:
+        compounds = load_compounds(db)
+
     tokens = apply_learned_compounds(build_token_list_from_docs(docs), compounds)
     words = " ".join(tokens)
 

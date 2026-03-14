@@ -48,12 +48,18 @@ class WordCloud(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self._background_tasks_started = False
+        self.compounds: set[str] = set()
 
     async def cog_load(self) -> None:
         """Update compounds when the cog loads."""
         print("[WordCloud] Cog loaded. Updating compounds database...")
         await asyncio.to_thread(update_compounds, self.bot.db)
         print("[WordCloud] Compounds database updated on startup.")
+        try:
+            self.compounds = await asyncio.to_thread(__import__("libs.wordcloud_service", fromlist=["load_compounds"]).load_compounds, self.bot.db)
+            print(f"[WordCloud] Loaded {len(self.compounds)} compounds into cache.")
+        except Exception as e:
+            print(f"[WordCloud] Failed loading compounds cache: {e}")
         asyncio.create_task(self._migrate_tokens_background())
 
     async def _migrate_tokens_background(self) -> None:
@@ -227,6 +233,7 @@ class WordCloud(commands.Cog):
                 generate_wordcloud_image,
                 self.bot.db,
                 docs,
+                compounds=self.compounds,
             )
         except ValueError:
             embed = embed_helper.create_warning_embed(
@@ -590,6 +597,7 @@ class WordCloud(commands.Cog):
                     generate_wordcloud_image,
                     self.bot.db,
                     docs,
+                    compounds=self.compounds,
                 )
             except (ValueError, RuntimeError) as error:
                 print(f"Error generating wordcloud: {error}")
@@ -668,6 +676,11 @@ class WordCloud(commands.Cog):
     async def update_compounds_task(self):
         try:
             await asyncio.to_thread(update_compounds, self.bot.db)
+            try:
+                self.compounds = await asyncio.to_thread(__import__("libs.wordcloud_service", fromlist=["load_compounds"]).load_compounds, self.bot.db)
+                print(f"[WordCloud] Refreshed compounds cache ({len(self.compounds)} items)")
+            except Exception as e:
+                print(f"[WordCloud] Failed to refresh compounds cache: {e}")
         except Exception as error:
             print(f"Error in update_compounds_task loop: {error}")
 
