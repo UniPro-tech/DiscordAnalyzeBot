@@ -12,3 +12,6 @@ resources:
   - hp-service.yaml
   - hp-ingress.yaml
   - hp-hpa.yaml
+  - clickhouse-deployment.yaml
+  - clickhouse-service.yaml
+  - clickhouse-pvc.yaml
