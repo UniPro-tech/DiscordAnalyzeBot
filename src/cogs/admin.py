@@ -7,11 +7,12 @@ from discord.ext import commands
 from config import ADMIN_USER_ID
 from libs.embed import EmbedHelper
 from libs.wordcloud_service import (
+    extract_learning_cursor,
     fetch_learning_documents,
     learn_from_texts,
     reset_learning_state,
     update_compounds,
-    update_last_learn_id,
+    update_last_learn_cursor,
 )
 
 
@@ -35,11 +36,11 @@ class Admin(commands.Cog):
 
     def _reset_and_relearn_sync(self) -> int:
         reset_learning_state(self.bot.db)
-        last_id = None
+        last_cursor = None
         learned_message_count = 0
 
         while True:
-            docs = fetch_learning_documents(self.bot.db, last_id)
+            docs = fetch_learning_documents(self.bot.db, last_cursor)
             if not docs:
                 break
 
@@ -48,8 +49,13 @@ class Admin(commands.Cog):
                 learn_from_texts(self.bot.db, texts, workers=1)
                 learned_message_count += len(texts)
 
-            last_id = docs[-1]["_id"]
-            update_last_learn_id(self.bot.db, last_id)
+            next_cursor = extract_learning_cursor(docs[-1])
+            if next_cursor is not None:
+                last_cursor = next_cursor
+                update_last_learn_cursor(self.bot.db, last_cursor)
+            else:
+                # timestamp/message_id が欠損したレコードで停止して無限再学習を防ぐ。
+                break
 
         update_compounds(self.bot.db)
         return learned_message_count
@@ -102,7 +108,7 @@ class Admin(commands.Cog):
         embed = embed_helper.create_success_embed(
             title="再学習完了",
             description=(
-                "学習データ（unigrams / ngrams / compounds / last_learn_id）をリセットして、"
+                "学習データ（unigrams / ngrams / compounds / last_learn_cursor）をリセットして、"
                 f"{learned_message_count}件のメッセージを再学習しました。"
             ),
         )

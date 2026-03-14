@@ -2,12 +2,17 @@ from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
 from libs.wordcloud_service import (
+    build_learning_cursor_query,
     build_during_since_timestamp,
+    extract_learning_cursor,
+    fetch_last_learn_cursor,
     get_schedule_during_days,
     learn_from_text,
     learn_from_texts,
     parse_during_days,
     parse_schedule_time,
+    reset_learning_state,
+    setup_learning_tables,
     should_execute_schedule,
     update_compounds,
 )
@@ -93,6 +98,74 @@ def test_should_execute_schedule_for_monthly_not_on_non_month_end_day():
     now_not_end = datetime(2026, 4, 29, 9, 0, tzinfo=JST)
 
     assert should_execute_schedule("monthly", None, now_not_end, JST) is False
+
+
+def test_build_learning_cursor_query_returns_empty_without_cursor():
+    assert build_learning_cursor_query(None) == {}
+
+
+def test_build_learning_cursor_query_builds_lexicographic_progress_query():
+    assert build_learning_cursor_query(
+        {"timestamp": "2026-03-01T00:00:00+00:00", "message_id": "100"}
+    ) == {
+        "$or": [
+            {"timestamp": {"$gt": "2026-03-01T00:00:00+00:00"}},
+            {
+                "timestamp": "2026-03-01T00:00:00+00:00",
+                "message_id": {"$gt": "100"},
+            },
+        ]
+    }
+
+
+def test_extract_learning_cursor_requires_timestamp_and_message_id():
+    assert extract_learning_cursor({"timestamp": "2026-03-01T00:00:00+00:00"}) is None
+    assert extract_learning_cursor({"message_id": "100"}) is None
+
+    assert extract_learning_cursor(
+        {"timestamp": "2026-03-01T00:00:00+00:00", "message_id": 100}
+    ) == {
+        "timestamp": "2026-03-01T00:00:00+00:00",
+        "message_id": "100",
+    }
+
+
+class _MetaFindOneStub:
+    def __init__(self, doc):
+        self._doc = doc
+
+    def find_one(self, _query):
+        return self._doc
+
+
+class _MetaCursorDBStub:
+    def __init__(self, doc):
+        self.meta = _MetaFindOneStub(doc)
+
+
+def test_fetch_last_learn_cursor_validates_document_shape():
+    assert fetch_last_learn_cursor(_MetaCursorDBStub(None)) is None
+    assert (
+        fetch_last_learn_cursor(
+            _MetaCursorDBStub({"_id": "last_learn_cursor", "value": "bad"})
+        )
+        is None
+    )
+
+    assert fetch_last_learn_cursor(
+        _MetaCursorDBStub(
+            {
+                "_id": "last_learn_cursor",
+                "value": {
+                    "timestamp": "2026-03-01T00:00:00+00:00",
+                    "message_id": "100",
+                },
+            }
+        )
+    ) == {
+        "timestamp": "2026-03-01T00:00:00+00:00",
+        "message_id": "100",
+    }
 
 
 class _CollectionStub:
@@ -239,3 +312,120 @@ def test_learn_from_texts_uses_bulk_write_and_aggregates_counts():
     assert unigram_counts["経済"] == 2
     assert unigram_counts["社会"] == 2
     assert unigram_counts["問題"] == 2
+
+
+class _ClickHouseLearningStub:
+    def __init__(self):
+        self.backend = "clickhouse"
+        self.tables = {
+            "unigrams": [],
+            "ngrams": [],
+            "compounds": [],
+            "meta": [],
+        }
+        self.commands = []
+
+    def insert_rows(self, table, rows, columns):
+        for row in rows:
+            self.tables.setdefault(table, []).append(dict(zip(columns, row)))
+
+    def command(self, query, parameters=None):
+        self.commands.append((query.strip(), parameters or {}))
+
+        normalized_query = query.strip().upper()
+        if normalized_query.startswith("TRUNCATE TABLE IF EXISTS"):
+            table_name = query.strip().split()[-1]
+            self.tables[table_name] = []
+
+    def query_scalar(self, query, parameters=None):
+        normalized = " ".join(query.split()).upper()
+        if "SELECT SUM(COUNT) AS TOTAL FROM UNIGRAMS" in normalized:
+            return sum(int(doc.get("count", 0)) for doc in self.tables["unigrams"])
+        return None
+
+    def query_dicts(self, query, parameters=None):
+        normalized = " ".join(query.split()).upper()
+
+        if "FROM UNIGRAMS GROUP BY WORD" in normalized:
+            grouped = {}
+            for doc in self.tables["unigrams"]:
+                grouped[doc["word"]] = grouped.get(doc["word"], 0) + int(doc["count"])
+            return [{"word": word, "count": count} for word, count in grouped.items()]
+
+        if "FROM NGRAMS GROUP BY NGRAM" in normalized:
+            grouped = {}
+            for doc in self.tables["ngrams"]:
+                key = tuple(doc["ngram"])
+                grouped[key] = grouped.get(key, 0) + int(doc["count"])
+            return [{"ngram": list(ngram), "count": count} for ngram, count in grouped.items()]
+
+        if "FROM COMPOUNDS" in normalized:
+            return [{"word": doc["word"]} for doc in self.tables["compounds"]]
+
+        return []
+
+
+def test_setup_learning_tables_for_clickhouse_creates_tables():
+    db = _ClickHouseLearningStub()
+
+    setup_learning_tables(db)
+
+    assert any("CREATE TABLE IF NOT EXISTS unigrams" in query for query, _ in db.commands)
+    assert any("CREATE TABLE IF NOT EXISTS ngrams" in query for query, _ in db.commands)
+    assert any("CREATE TABLE IF NOT EXISTS compounds" in query for query, _ in db.commands)
+
+
+def test_learn_from_texts_for_clickhouse_inserts_aggregated_rows():
+    db = _ClickHouseLearningStub()
+
+    learn_from_texts(db, ["経済社会問題", "経済社会問題"], workers=1)
+
+    unigram_count_by_word = {}
+    for row in db.tables["unigrams"]:
+        unigram_count_by_word[row["word"]] = unigram_count_by_word.get(row["word"], 0) + row["count"]
+
+    assert unigram_count_by_word["経済"] == 2
+    assert unigram_count_by_word["社会"] == 2
+    assert unigram_count_by_word["問題"] == 2
+
+
+def test_update_compounds_for_clickhouse_inserts_compound_rows():
+    db = _ClickHouseLearningStub()
+    db.insert_rows(
+        "unigrams",
+        [
+            ["ミラノ", 20],
+            ["風", 20],
+            ["ドリア", 20],
+            ["その他", 340],
+        ],
+        ["word", "count"],
+    )
+    db.insert_rows(
+        "ngrams",
+        [
+            [["ミラノ", "風"], 10],
+            [["風", "ドリア"], 10],
+        ],
+        ["ngram", "count"],
+    )
+
+    update_compounds(db)
+
+    saved_words = {row["word"] for row in db.tables["compounds"]}
+    assert "ミラノ風" in saved_words
+    assert "風ドリア" in saved_words
+    assert "ミラノ風ドリア" in saved_words
+
+
+def test_reset_learning_state_for_clickhouse_truncates_learning_tables():
+    db = _ClickHouseLearningStub()
+    db.insert_rows("unigrams", [["a", 1]], ["word", "count"])
+    db.insert_rows("ngrams", [[["a", "b"], 1]], ["ngram", "count"])
+    db.insert_rows("compounds", [["ab", 3.1]], ["word", "pmi"])
+
+    reset_learning_state(db)
+
+    assert db.tables["unigrams"] == []
+    assert db.tables["ngrams"] == []
+    assert db.tables["compounds"] == []

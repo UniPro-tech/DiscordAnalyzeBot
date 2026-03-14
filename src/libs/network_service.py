@@ -10,6 +10,7 @@ import matplotlib.font_manager as fm
 import matplotlib.pyplot as plt
 import networkx as nx
 
+from libs.message_store import fetch_messages, fetch_messages_by_ids
 from libs.wordcloud_service import build_during_since_timestamp
 
 
@@ -58,18 +59,18 @@ def fetch_network_documents(
         channel_id=channel_id,
     )
 
-    docs = list(
-        db.messages.find(
-            query,
-            {
-                "message_id": 1,
-                "user_id": 1,
-                "reply_to": 1,
-                "mentions": 1,
-            },
-        )
-        .sort("timestamp", -1)
-        .limit(limit)
+    docs = fetch_messages(
+        db,
+        query,
+        {
+            "message_id": 1,
+            "user_id": 1,
+            "reply_to": 1,
+            "mentions": 1,
+        },
+        sort_field="timestamp",
+        sort_order=-1,
+        limit=limit,
     )
 
     existing_message_ids = {
@@ -87,11 +88,10 @@ def fetch_network_documents(
     if not missing_reply_target_ids:
         return docs
 
-    reply_target_docs = db.messages.find(
-        {
-            "guild_id": guild_id,
-            "message_id": {"$in": list(missing_reply_target_ids)},
-        },
+    reply_target_docs = fetch_messages_by_ids(
+        db,
+        guild_id,
+        list(missing_reply_target_ids),
         {
             "message_id": 1,
             "user_id": 1,

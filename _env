@@ -1,3 +1,7 @@
 DISCORD_TOKEN="your_discord_token_here"
 ADMIN_USER_ID=123456789012345678  
+STORAGE_BACKEND="hybrid"
+MIGRATION="false"
 MONGODB_DSN="your_mongodb_dsn_here"
+CLICKHOUSE_PASSWORD="clickhousepassword"
+CLICKHOUSE_DSN="http://default:${CLICKHOUSE_PASSWORD}@localhost:8123/analyze_bot"

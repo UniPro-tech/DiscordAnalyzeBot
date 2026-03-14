@@ -3,20 +3,28 @@ import os
 import sys
 import asyncio
 import re
-from pymongo import MongoClient
 from discord.ext import commands, tasks
 from libs.message_store import (
+    count_distinct_message_users,
+    count_messages,
     delete_guild_data,
     delete_messages_by_ids,
     get_opt_out_flags,
+    insert_message,
+    setup_message_indexes,
 )
+from libs.migration import maybe_run_clickhouse_migration
+from libs.storage import HybridDatabase, get_storage_backend, init_storages
+from libs.settings_store import setup_settings_indexes
 from libs.text_processing import extract_tokens, normalize_text
+from libs.wordcloud_service import setup_learning_tables
 
 # Add src directory to sys.path for imports
 sys.path.insert(0, os.path.dirname(__file__))
 
 TOKEN = os.getenv("DISCORD_TOKEN")
 DB_DSN = os.getenv("MONGODB_DSN")
+STORAGE_BACKEND = get_storage_backend()
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -31,45 +39,25 @@ class AnalyzerBot(commands.Bot):
 
 bot = AnalyzerBot()
 
-# MongoDB
-client_db = MongoClient(DB_DSN)
-bot.db = client_db["discord_analyzer"]
+# Storage backend (mongo / clickhouse)
+mongo_db, clickhouse_db, _resolved_backend = init_storages()
+bot.db_mongo = mongo_db
+bot.db_clickhouse = clickhouse_db
+if _resolved_backend == "hybrid" and mongo_db is not None and clickhouse_db is not None:
+    bot.db = HybridDatabase(db_mongo=mongo_db, db_clickhouse=clickhouse_db)
+elif _resolved_backend == "clickhouse":
+    bot.db = clickhouse_db
+else:
+    bot.db = mongo_db
 
 STATUS_ROTATION_SECONDS = 30
 status_index = 0
 
 
 def setup_db():
-    # メッセージコレクションのインデックス設定
-    bot.db.messages.create_index("user_id")
-    bot.db.messages.create_index("channel_id")
-    bot.db.messages.create_index("guild_id")
-    bot.db.messages.create_index(
-        "message_id",
-        unique=True,
-        partialFilterExpression={"message_id": {"$exists": True}},
-    )
-    bot.db.messages.create_index("reply_to")
-
-    # TTL Index: 30日後に自動的に削除
-    bot.db.messages.create_index("timestamp", expireAfterSeconds=30 * 24 * 60 * 60)
-
-    # Guild設定のインデックス設定
-    bot.db.guild_settings.create_index(
-        [("guild_id", 1), ("channel_id", 1), ("frequency", 1)], unique=True
-    )
-    bot.db.guild_settings.create_index("guild_id")
-    bot.db.guild_settings.create_index("enabled")
-
-    # ユーザー設定コレクションのインデックス設定
-    bot.db.user_settings.create_index("user_id", unique=True)
-    bot.db.user_settings.create_index("opt_out")
-
-    # チャンネル設定コレクションのインデックス設定
-    bot.db.channel_settings.create_index(
-        [("guild_id", 1), ("channel_id", 1)], unique=True
-    )
-    bot.db.channel_settings.create_index("opt_out")
+    setup_message_indexes(bot.db)
+    setup_settings_indexes(bot.db)
+    setup_learning_tables(bot.db)
 
 
 @bot.event
@@ -77,13 +65,13 @@ async def on_ready():
     if not rotate_status.is_running():
         rotate_status.start()
     await bot.tree.sync()
-    print(f"Logged in as {bot.user}")
+    print(f"Logged in as {bot.user} (storage={STORAGE_BACKEND})")
 
 
 async def _get_status_messages():
     def collect_counts():
-        messages_count = bot.db.messages.estimated_document_count()
-        collected_user_count = len(bot.db.messages.distinct("user_id"))
+        messages_count = count_messages(bot.db)
+        collected_user_count = count_distinct_message_users(bot.db)
         return messages_count, collected_user_count
 
     messages_count, collected_user_count = await asyncio.to_thread(collect_counts)
@@ -168,7 +156,7 @@ async def on_message(message):
         content = d.get("content", "")
         if content:
             d["tokens"] = list(extract_tokens(normalize_text(content)))
-        bot.db.messages.insert_one(d)
+        insert_message(bot.db, d)
 
     await asyncio.to_thread(_save_message, data)
 
@@ -282,6 +270,12 @@ Analyze Botは、サーバー内のテキストチャンネルのメッセージ
 async def main():
     print("Starting bot...")
     setup_db()
+
+    migration_counts = await asyncio.to_thread(maybe_run_clickhouse_migration, bot.db)
+    if migration_counts.get("skipped_existing_data"):
+        print("Startup migration skipped because ClickHouse already contains data.")
+    elif migration_counts:
+        print(f"Startup migration completed: {migration_counts}")
 
     await bot.load_extension("cogs.ping")
     await bot.load_extension("cogs.wordcloud")
