@@ -798,11 +798,6 @@ def migrate_message_tokens(db, batch_size: int = 500) -> int:
     query = {"tokens": {"$exists": False}, "content": {"$type": "string", "$ne": ""}}
 
     while True:
-        docs = fetch_messages(msg_db, None, {"message_id": 1, "content": 1}, limit=batch_size)
-        # For ClickHouse fetch_messages expects db to be ClickHouse and will
-        # return rows; but when called with msg_db above, it will query entire
-        # table unless a query is provided. Instead, use message_store.fetch_messages
-        # by passing the db and query.
         docs = fetch_messages(db, query, {"message_id": 1, "content": 1}, limit=batch_size)
         if not docs:
             break
