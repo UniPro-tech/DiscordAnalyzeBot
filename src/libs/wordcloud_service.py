@@ -764,29 +764,65 @@ def get_schedule_during_days(frequency: str, now_jst: datetime) -> int | None:
 
 def migrate_message_tokens(db, batch_size: int = 500) -> int:
     """起動時マイグレーション: tokensフィールドが未付与のメッセージをバッチ処理して一括保存する。"""
-    if _is_clickhouse(db):
-        return 0
-
     total = 0
+
+    # MongoDB 側の処理
+    if not _is_clickhouse(db):
+        query = {"tokens": {"$exists": False}, "content": {"$type": "string", "$ne": ""}}
+
+        while True:
+            docs = list(db.messages.find(query, {"_id": 1, "content": 1}).limit(batch_size))
+            if not docs:
+                break
+
+            ops = [
+                UpdateOne(
+                    {"_id": doc["_id"]},
+                    {"$set": {"tokens": extract_tokens(normalize_text(doc["content"]))}},
+                )
+                for doc in docs
+                if (doc.get("content") or "").strip()
+            ]
+
+            if ops:
+                db.messages.bulk_write(ops, ordered=False)
+                total += len(ops)
+
+        return total
+
+    # ClickHouse / hybrid 環境の処理: ClickHouse は UPDATE を使って tokens を設定する。
+    msg_db = db
+    if getattr(db, "backend", "mongo") == "hybrid":
+        msg_db = db.db_clickhouse
+
     query = {"tokens": {"$exists": False}, "content": {"$type": "string", "$ne": ""}}
 
     while True:
-        docs = list(db.messages.find(query, {"_id": 1, "content": 1}).limit(batch_size))
+        docs = fetch_messages(msg_db, None, {"message_id": 1, "content": 1}, limit=batch_size)
+        # For ClickHouse fetch_messages expects db to be ClickHouse and will
+        # return rows; but when called with msg_db above, it will query entire
+        # table unless a query is provided. Instead, use message_store.fetch_messages
+        # by passing the db and query.
+        docs = fetch_messages(db, query, {"message_id": 1, "content": 1}, limit=batch_size)
         if not docs:
             break
 
-        ops = [
-            UpdateOne(
-                {"_id": doc["_id"]},
-                {"$set": {"tokens": extract_tokens(normalize_text(doc["content"]))}},
-            )
-            for doc in docs
-            if (doc.get("content") or "").strip()
-        ]
+        for doc in docs:
+            content = (doc.get("content") or "").strip()
+            if not content:
+                continue
 
-        if ops:
-            db.messages.bulk_write(ops, ordered=False)
-            total += len(ops)
+            tokens = list(extract_tokens(normalize_text(content)))
+            # ClickHouse に対しては行単位で UPDATE を発行する
+            try:
+                msg_db.command(
+                    "ALTER TABLE messages UPDATE tokens = {tokens:Array(String)} WHERE message_id = {message_id:String}",
+                    {"tokens": tokens, "message_id": str(doc.get("message_id", ""))},
+                )
+                total += 1
+            except Exception:
+                # 失敗しても処理を継続する
+                continue
 
     return total
 
