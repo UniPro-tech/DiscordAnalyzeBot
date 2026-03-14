@@ -1,5 +1,4 @@
 from collections import defaultdict
-from datetime import timedelta
 import io
 import math
 from typing import Callable
@@ -11,7 +10,7 @@ import matplotlib.font_manager as fm
 import matplotlib.pyplot as plt
 import networkx as nx
 
-from libs.wordcloud_service import discord_utcnow
+from libs.wordcloud_service import build_during_since_timestamp
 
 
 DEFAULT_MESSAGE_LIMIT = 5000
@@ -23,15 +22,15 @@ CANVAS_DPI = 100
 def build_network_message_query(
     guild_id: str,
     *,
-    period_days: int | None = None,
+    during_days: int | None = None,
     user_id: str | None = None,
     channel_id: str | None = None,
 ) -> dict:
     query = {"guild_id": guild_id}
 
-    if period_days is not None:
+    if during_days is not None:
         query["timestamp"] = {
-            "$gte": (discord_utcnow() - timedelta(days=period_days)).isoformat()
+            "$gte": build_during_since_timestamp(during_days)
         }
 
     if user_id is not None:
@@ -47,14 +46,14 @@ def fetch_network_documents(
     db,
     guild_id: str,
     *,
-    period_days: int | None = None,
+    during_days: int | None = None,
     user_id: str | None = None,
     channel_id: str | None = None,
     limit: int = DEFAULT_MESSAGE_LIMIT,
 ) -> list[dict]:
     query = build_network_message_query(
         guild_id,
-        period_days=period_days,
+        during_days=during_days,
         user_id=user_id,
         channel_id=channel_id,
     )

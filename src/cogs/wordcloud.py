@@ -13,10 +13,11 @@ from libs.wordcloud_service import (
     fetch_learning_documents,
     fetch_wordcloud_documents,
     generate_wordcloud_image,
+    get_schedule_during_days,
     get_frequency_label,
     learn_from_texts,
     migrate_message_tokens,
-    parse_period_days,
+    parse_during_days,
     parse_schedule_time,
     should_execute_schedule,
     update_compounds,
@@ -129,7 +130,7 @@ class WordCloud(commands.Cog):
         description="ワードクラウドを生成します",
     )
     @app_commands.describe(
-        period="ワードクラウドの元になる期間（単位: 日。省略した場合はデータ保持期間(デフォルト: 一ヶ月)）",
+        during="ワードクラウドの元になる期間（単位: 日。1なら当日0:00以降、2なら前日0:00以降）",
         user="特定のユーザーのメッセージからワードクラウドを生成します（省略した場合は全ユーザーのメッセージから生成）",
         channel="特定のチャンネルのメッセージからワードクラウドを生成します（省略した場合は全チャンネルのメッセージから生成）",
         role="特定のロールを持つユーザーのメッセージからワードクラウドを生成します（省略した場合は全ユーザーのメッセージから生成）",
@@ -137,7 +138,7 @@ class WordCloud(commands.Cog):
     async def generate(
         self,
         interaction: discord.Interaction,
-        period: Optional[str] = None,
+        during: Optional[str] = None,
         user: Optional[discord.User] = None,
         channel: Optional[discord.TextChannel] = None,
         role: Optional[discord.Role] = None,
@@ -152,7 +153,7 @@ class WordCloud(commands.Cog):
             return
 
         try:
-            period_days = parse_period_days(period)
+            during_days = parse_during_days(during)
         except ValueError:
             embed = embed_helper.create_error_embed(
                 title="エラー", description="期間は1以上の数値で指定してください。"
@@ -164,7 +165,7 @@ class WordCloud(commands.Cog):
                 title="エラー", description="期間の処理中にエラーが発生しました"
             )
             await interaction.response.send_message(embed=embed, ephemeral=True)
-            print(f"Error processing period: {error}")
+            print(f"Error processing during: {error}")
             return
 
         await interaction.response.defer(thinking=True)
@@ -174,7 +175,7 @@ class WordCloud(commands.Cog):
                 fetch_wordcloud_documents,
                 self.bot.db,
                 str(interaction.guild_id),
-                period_days=period_days,
+                during_days=during_days,
                 user_id=str(user.id) if user is not None else None,
                 channel_id=str(channel.id) if channel is not None else None,
                 role_id=str(role.id) if role is not None else None,
@@ -540,11 +541,18 @@ class WordCloud(commands.Cog):
                 print(f"Channel {channel_id} not found in guild {guild_id}")
                 return
 
+            now_jst = discord.utils.utcnow().astimezone(self.JST)
+            during_days = get_schedule_during_days(frequency, now_jst)
+            if during_days is None:
+                print(f"Unknown schedule frequency: {frequency}")
+                return
+
             try:
                 docs = await asyncio.to_thread(
                     fetch_wordcloud_documents,
                     self.bot.db,
                     guild_id,
+                    during_days=during_days,
                 )
             except Exception as error:
                 print(f"Database query error for scheduled wordcloud: {error}")

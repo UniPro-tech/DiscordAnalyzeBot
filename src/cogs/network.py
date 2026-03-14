@@ -10,7 +10,7 @@ from libs.network_service import (
     fetch_network_documents,
     generate_conversation_network,
 )
-from libs.wordcloud_service import parse_period_days
+from libs.wordcloud_service import parse_during_days
 
 
 class ConversationNetwork(commands.Cog):
@@ -30,14 +30,14 @@ class ConversationNetwork(commands.Cog):
         description="会話ネットワークを生成します",
     )
     @app_commands.describe(
-        period="解析する期間（日）",
+        during="解析する期間（日）。1なら当日0:00以降、2なら前日0:00以降",
         user="特定ユーザーのみ解析",
         channel="特定チャンネルのみ解析",
     )
     async def generate_network(
         self,
         interaction: discord.Interaction,
-        period: Optional[str] = None,
+        during: Optional[str] = None,
         user: Optional[discord.User] = None,
         channel: Optional[discord.TextChannel] = None,
     ):
@@ -59,9 +59,9 @@ class ConversationNetwork(commands.Cog):
             await interaction.response.send_message(embed=embed, ephemeral=True)
             return
 
-        if period:
+        if during:
             try:
-                period_days = parse_period_days(period)
+                during_days = parse_during_days(during)
             except ValueError:
                 embed = embed_helper.create_error_embed(
                     title="エラー",
@@ -75,10 +75,10 @@ class ConversationNetwork(commands.Cog):
                     description="期間の処理中にエラーが発生しました。",
                 )
                 await interaction.response.send_message(embed=embed, ephemeral=True)
-                print(f"Error processing network period: {e}")
+                print(f"Error processing network during: {e}")
                 return
         else:
-            period_days = None
+            during_days = None
 
         await interaction.response.defer(thinking=True)
 
@@ -86,7 +86,7 @@ class ConversationNetwork(commands.Cog):
             docs = fetch_network_documents(
                 self.bot.db,
                 str(interaction.guild_id),
-                period_days=period_days,
+                during_days=during_days,
                 user_id=str(user.id) if user else None,
                 channel_id=str(channel.id) if channel else None,
                 limit=self.MAX_MESSAGE_COUNT,

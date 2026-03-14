@@ -1,9 +1,12 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
 from libs.wordcloud_service import (
+    build_during_since_timestamp,
+    get_schedule_during_days,
     learn_from_text,
     learn_from_texts,
+    parse_during_days,
     parse_schedule_time,
     should_execute_schedule,
     update_compounds,
@@ -17,6 +20,35 @@ def test_parse_schedule_time_accepts_hh_mm():
     assert parse_schedule_time("09:30") == (9, 30)
     assert parse_schedule_time("24:00") is None
     assert parse_schedule_time("bad") is None
+
+
+def test_parse_during_days_validates_positive_integer():
+    assert parse_during_days(None) is None
+    assert parse_during_days("1") == 1
+
+    try:
+        parse_during_days("0")
+        assert False
+    except ValueError:
+        assert True
+
+
+def test_build_during_since_timestamp_uses_jst_day_boundary(monkeypatch):
+    monkeypatch.setattr(
+        "libs.wordcloud_service.discord_utcnow",
+        lambda: datetime(2026, 3, 13, 10, 45, tzinfo=timezone.utc),
+    )
+
+    assert build_during_since_timestamp(1) == "2026-03-12T15:00:00+00:00"
+    assert build_during_since_timestamp(2) == "2026-03-11T15:00:00+00:00"
+
+
+def test_get_schedule_during_days_matches_frequency():
+    now = datetime(2026, 3, 31, 9, 0, tzinfo=JST)
+
+    assert get_schedule_during_days("daily", now) == 1
+    assert get_schedule_during_days("weekly", now) == 7
+    assert get_schedule_during_days("monthly", now) == 31
 
 
 def test_should_execute_schedule_for_weekly_only_once_per_week():
@@ -194,7 +226,7 @@ def test_update_compounds_promotes_overlapping_bigrams_to_trigram():
 def test_learn_from_texts_uses_bulk_write_and_aggregates_counts():
     db = _BatchLearnDBStub()
 
-    learn_from_texts(db, ["経済社会問題", "経済社会問題"], workers=2)
+    learn_from_texts(db, ["経済社会問題", "経済社会問題"], workers=1)
 
     assert len(db.unigrams.bulk_calls) == 1
     assert len(db.ngrams.bulk_calls) == 1

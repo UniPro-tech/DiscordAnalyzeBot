@@ -1,10 +1,11 @@
 from calendar import monthrange
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import io
 from typing import Optional
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from pymongo import UpdateOne
+from zoneinfo import ZoneInfo
 
 from libs.visualization_common import resolve_font_path
 
@@ -25,24 +26,41 @@ from wordcloud import WordCloud
 PMI_THRESHOLD = 3
 COUNT_THRESHOLD = 10
 DEFAULT_MESSAGE_LIMIT = 3000
+JST = ZoneInfo("Asia/Tokyo")
+
+
+def parse_during_days(during: Optional[str]) -> int | None:
+    if during is None:
+        return None
+
+    during_days = int(during)
+
+    if during_days <= 0:
+        raise ValueError("during must be positive")
+
+    return during_days
 
 
 def parse_period_days(period: Optional[str]) -> int | None:
-    if period is None:
-        return None
+    # Backward-compatible wrapper for callers still using the old name.
+    return parse_during_days(period)
 
-    period_days = int(period)
 
-    if period_days <= 0:
-        raise ValueError("period must be positive")
+def build_during_since_timestamp(during_days: int, *, tz=JST) -> str:
+    if during_days <= 0:
+        raise ValueError("during must be positive")
 
-    return period_days
+    now_local = discord_utcnow().astimezone(tz)
+    since_local = now_local.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(
+        days=during_days - 1
+    )
+    return since_local.astimezone(timezone.utc).isoformat()
 
 
 def build_wordcloud_message_query(
     guild_id: str,
     *,
-    period_days: int | None = None,
+    during_days: int | None = None,
     user_id: str | None = None,
     channel_id: str | None = None,
     role_id: str | None = None,
@@ -52,9 +70,9 @@ def build_wordcloud_message_query(
         "content": {"$type": "string", "$ne": ""},
     }
 
-    if period_days is not None:
+    if during_days is not None:
         query["timestamp"] = {
-            "$gte": (discord_utcnow() - timedelta(days=period_days)).isoformat()
+            "$gte": build_during_since_timestamp(during_days)
         }
 
     if user_id is not None:
@@ -79,7 +97,7 @@ def fetch_wordcloud_documents(
     db,
     guild_id: str,
     *,
-    period_days: int | None = None,
+    during_days: int | None = None,
     user_id: str | None = None,
     channel_id: str | None = None,
     role_id: str | None = None,
@@ -87,7 +105,7 @@ def fetch_wordcloud_documents(
 ) -> list[dict]:
     query = build_wordcloud_message_query(
         guild_id,
-        period_days=period_days,
+        during_days=during_days,
         user_id=user_id,
         channel_id=channel_id,
         role_id=role_id,
@@ -524,6 +542,19 @@ def get_frequency_label(frequency: str) -> str:
         "weekly": "ウィークリー",
         "monthly": "マンスリー",
     }.get(frequency, frequency)
+
+
+def get_schedule_during_days(frequency: str, now_jst: datetime) -> int | None:
+    if frequency == "daily":
+        return 1
+
+    if frequency == "weekly":
+        return 7
+
+    if frequency == "monthly":
+        return now_jst.day
+
+    return None
 
 
 def migrate_message_tokens(db, batch_size: int = 500) -> int:
