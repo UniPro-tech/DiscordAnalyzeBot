@@ -637,33 +637,62 @@ class WordCloud(commands.Cog):
     async def background_learn(self):
         try:
             def _learn_batch_sync() -> None:
-                last_cursor = fetch_last_learn_cursor(self.bot.db)
-                legacy_last_id = None
+                try:
+                    print("[WordCloud DEBUG] background_learn: bot.db type:", type(self.bot.db))
+                    try:
+                        print("[WordCloud DEBUG] bot.db repr:", repr(self.bot.db))
+                    except Exception:
+                        pass
 
-                if last_cursor is None:
-                    legacy_last_id = fetch_legacy_last_learn_id(self.bot.db)
+                    last_cursor = fetch_last_learn_cursor(self.bot.db)
+                    print("[WordCloud DEBUG] fetch_last_learn_cursor returned type:", type(last_cursor), "value:", last_cursor)
+                    legacy_last_id = None
 
-                docs = fetch_learning_documents(
-                    self.bot.db,
-                    last_cursor,
-                    legacy_last_id=legacy_last_id,
-                )
+                    if last_cursor is None:
+                        legacy_last_id = fetch_legacy_last_learn_id(self.bot.db)
+                        print("[WordCloud DEBUG] fetch_legacy_last_learn_id returned:", legacy_last_id)
 
-                if not docs:
-                    return
+                    docs = fetch_learning_documents(
+                        self.bot.db,
+                        last_cursor,
+                        legacy_last_id=legacy_last_id,
+                    )
+                    print("[WordCloud DEBUG] fetch_learning_documents returned type:", type(docs))
+                    if isinstance(docs, list) and docs:
+                        try:
+                            print("[WordCloud DEBUG] first doc keys:", list(docs[0].keys()))
+                        except Exception:
+                            print("[WordCloud DEBUG] first doc repr:", repr(docs[0]))
 
-                texts = [build_wordcloud_source_text([doc]) for doc in docs]
-                learn_from_texts(self.bot.db, texts)
+                    if not docs:
+                        return
 
-                new_cursor = extract_learning_cursor(docs[-1])
-                if new_cursor is not None:
-                    update_last_learn_cursor(self.bot.db, new_cursor)
-                elif legacy_last_id is not None and docs[-1].get("_id") is not None:
-                    update_last_learn_id(self.bot.db, docs[-1]["_id"])
+                    texts = [build_wordcloud_source_text([doc]) for doc in docs]
+                    learn_from_texts(self.bot.db, texts)
 
-            await asyncio.to_thread(_learn_batch_sync)
+                    new_cursor = extract_learning_cursor(docs[-1])
+                    if new_cursor is not None:
+                        update_last_learn_cursor(self.bot.db, new_cursor)
+                    elif legacy_last_id is not None and docs[-1].get("_id") is not None:
+                        update_last_learn_id(self.bot.db, docs[-1]["_id"])
+                except Exception as e:
+                    import traceback
+
+                    print("[WordCloud DEBUG] Exception inside _learn_batch_sync:")
+                    traceback.print_exc()
+
+            try:
+                await asyncio.to_thread(_learn_batch_sync)
+            except Exception:
+                import traceback
+
+                print("[WordCloud DEBUG] Exception while running _learn_batch_sync in thread:")
+                traceback.print_exc()
         except Exception as error:
+            import traceback
+
             print(f"Error in background_learn loop: {error}")
+            traceback.print_exc()
 
     @background_learn.before_loop
     async def before_background_learn(self):
