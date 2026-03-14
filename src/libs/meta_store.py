@@ -8,8 +8,17 @@ def _is_clickhouse(db) -> bool:
     if backend == "clickhouse":
         return True
 
-    # Detect raw ClickHouse client by presence of query/insert methods
-    if hasattr(db, "query_dicts") or hasattr(db, "query_scalar") or hasattr(db, "insert_rows"):
+    # Avoid triggering pymongo's dynamic attribute access (which returns
+    # Collection objects) by checking for callables instead of just
+    # attribute existence.
+    q = getattr(db, "query_dicts", None)
+    if callable(q):
+        return True
+    s = getattr(db, "query_scalar", None)
+    if callable(s):
+        return True
+    ins = getattr(db, "insert_rows", None)
+    if callable(ins):
         return True
 
     return False
