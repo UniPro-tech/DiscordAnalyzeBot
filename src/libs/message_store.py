@@ -23,6 +23,28 @@ def _normalize_timestamp(value):
     return value
 
 
+def _format_clickhouse_timestamp(value):
+    """Format a datetime or ISO string into ClickHouse-friendly
+    'YYYY-MM-DD HH:MM:SS.mmm' (UTC, millisecond precision) or return
+    the original string if formatting fails."""
+    if isinstance(value, datetime):
+        dt = value
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+
+    if isinstance(value, str):
+        try:
+            parsed = datetime.fromisoformat(value)
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return parsed.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+        except Exception:
+            return value
+
+    return str(value)
+
+
 def _build_where_clause(query: dict, params: dict, *, prefix: str = "p") -> str:
     conditions = []
 
@@ -56,13 +78,46 @@ def _build_where_clause(query: dict, params: dict, *, prefix: str = "p") -> str:
             if "$gte" in expected:
                 gte_value = expected["$gte"]
                 if key == "timestamp":
-                    params[param_key] = str(gte_value)
+                    params[param_key] = _format_clickhouse_timestamp(gte_value)
                     conditions.append(
                         f"timestamp >= parseDateTime64BestEffortOrNull({{{param_key}:String}})"
                     )
                 else:
                     params[param_key] = str(gte_value)
                     conditions.append(f"{key} >= {{{param_key}:String}}")
+
+            if "$gt" in expected:
+                gt_value = expected["$gt"]
+                if key == "timestamp":
+                    params[param_key] = _format_clickhouse_timestamp(gt_value)
+                    conditions.append(
+                        f"timestamp > parseDateTime64BestEffortOrNull({{{param_key}:String}})"
+                    )
+                else:
+                    params[param_key] = str(gt_value)
+                    conditions.append(f"{key} > {{{param_key}:String}}")
+
+            if "$lt" in expected:
+                lt_value = expected["$lt"]
+                if key == "timestamp":
+                    params[param_key] = _format_clickhouse_timestamp(lt_value)
+                    conditions.append(
+                        f"timestamp < parseDateTime64BestEffortOrNull({{{param_key}:String}})"
+                    )
+                else:
+                    params[param_key] = str(lt_value)
+                    conditions.append(f"{key} < {{{param_key}:String}}")
+
+            if "$lte" in expected:
+                lte_value = expected["$lte"]
+                if key == "timestamp":
+                    params[param_key] = _format_clickhouse_timestamp(lte_value)
+                    conditions.append(
+                        f"timestamp <= parseDateTime64BestEffortOrNull({{{param_key}:String}})"
+                    )
+                else:
+                    params[param_key] = str(lte_value)
+                    conditions.append(f"{key} <= {{{param_key}:String}}")
 
             if "$ne" in expected:
                 params[param_key] = str(expected["$ne"])
@@ -76,7 +131,11 @@ def _build_where_clause(query: dict, params: dict, *, prefix: str = "p") -> str:
             # $type は ClickHouse 側での型設計前提なのでここでは無視する。
             continue
 
-        params[param_key] = str(expected)
+        # For timestamp equality, format to ClickHouse-friendly string
+        if key == "timestamp":
+            params[param_key] = _format_clickhouse_timestamp(expected)
+        else:
+            params[param_key] = str(expected)
         conditions.append(f"{key} = {{{param_key}:String}}")
 
     return " AND ".join(conditions)
@@ -314,6 +373,16 @@ def insert_message(db, message: dict) -> None:
             except ValueError:
                 timestamp = datetime.now(timezone.utc)
 
+        # Convert timestamp to UTC and format as ClickHouse-friendly
+        # string with millisecond precision: "YYYY-MM-DD HH:MM:SS.mmm"
+        if isinstance(timestamp, datetime):
+            if timestamp.tzinfo is None:
+                timestamp = timestamp.replace(tzinfo=timezone.utc)
+            ts_utc = timestamp.astimezone(timezone.utc)
+            ts_str = ts_utc.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+        else:
+            ts_str = None
+
         row = [
             str(message.get("message_id", "")),
             str(message.get("guild_id", "")),
@@ -323,7 +392,7 @@ def insert_message(db, message: dict) -> None:
             str(message.get("channel_id", "")),
             str(message.get("channel_name", "")),
             str(message.get("content", "")),
-            timestamp,
+            ts_str,
             [str(value) for value in message.get("role_ids", [])],
             str(message.get("reply_to")) if message.get("reply_to") is not None else None,
             [str(value) for value in message.get("mentions", [])],
