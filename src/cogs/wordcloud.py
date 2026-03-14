@@ -208,6 +208,20 @@ class WordCloud(commands.Cog):
             await interaction.followup.send(embed=embed)
             return
 
+        # 速度優先: 実行時に tokens がないメッセージは無視する。
+        docs = [doc for doc in docs if doc.get("tokens")]
+
+        if not docs:
+            embed = embed_helper.create_warning_embed(
+                title="トークンなし",
+                description=(
+                    "解析済みトークンを持つメッセージが見つかりません。"
+                    "バックグラウンド処理が完行されるのを待つか、管理者にマイグレーションを依頼してください。"
+                ),
+            )
+            await interaction.followup.send(embed=embed)
+            return
+
         try:
             image_buffer = await asyncio.to_thread(
                 generate_wordcloud_image,
