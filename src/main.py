@@ -220,7 +220,7 @@ async def on_guild_join(guild):
         owner = guild.owner  # サーバーオーナー
 
         if owner is None:
-            print(f"Failed to get owner for guild {guild.name} (ID: {guild.id}), skipping welcome message.")
+            print(f"{guild.name} のオーナー情報が取得できませんでした")
             return
 
         message = """
@@ -260,10 +260,10 @@ Analyze Botは、サーバー内のテキストチャンネルのメッセージ
 """
         await owner.send(message)
     except discord.Forbidden:
-        print(f"Failed to send welcome message to {guild.name}'s owner: Forbidden")
+        print(f"{guild.name} のオーナーに権限不足のためDMを送れませんでした")
     except Exception as e:
         print(
-            f"Failed to send welcome message to {guild.name}'s owner: {e}"
+            f"{guild.name} へのウェルカムメッセージの送信中にエラーが発生しました: {e}"
         )
 
 
