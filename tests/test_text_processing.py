@@ -1,9 +1,11 @@
 from libs.text_processing import (
+    analyze_sudachi_pos,
     apply_learned_compounds,
     clear_extract_tokens_cache,
     extract_tokens,
     extract_tokens_with_indices,
     normalize_text,
+    resolve_split_mode,
 )
 
 
@@ -74,6 +76,9 @@ class _TokenStub:
     def surface(self):
         return self._word
 
+    def dictionary_form(self):
+        return self._word
+
 
 class _TokenizerStub:
     def __init__(self):
@@ -101,3 +106,28 @@ def test_extract_tokens_cache_and_clear(monkeypatch):
     clear_extract_tokens_cache()
     assert extract_tokens("same input") == ["参加者"]
     assert tokenizer_stub.calls == 2
+
+
+def test_resolve_split_mode_rejects_invalid_value():
+    import pytest
+
+    with pytest.raises(ValueError):
+        resolve_split_mode("z")
+
+
+def test_analyze_sudachi_pos_returns_surface_pos_and_base_form(monkeypatch):
+    import libs.text_processing as text_processing
+
+    class _AnalyzerTokenizerStub:
+        def tokenize(self, _text, _mode):
+            return [
+                _TokenStub("参加者", ("名詞", "一般")),
+                _TokenStub("です", ("助動詞", "*")),
+            ]
+
+    monkeypatch.setattr(text_processing, "tokenizer_obj", _AnalyzerTokenizerStub())
+
+    assert analyze_sudachi_pos("参加者です", "C") == [
+        ("参加者", ("名詞", "一般"), "参加者"),
+        ("です", ("助動詞", "*"), "です"),
+    ]

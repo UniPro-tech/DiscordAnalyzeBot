@@ -49,6 +49,11 @@ STOP_WORDS = {
 
 tokenizer_obj = dictionary.Dictionary().create()
 MODE = tokenizer.Tokenizer.SplitMode.C
+SPLIT_MODE_MAP = {
+    "A": tokenizer.Tokenizer.SplitMode.A,
+    "B": tokenizer.Tokenizer.SplitMode.B,
+    "C": tokenizer.Tokenizer.SplitMode.C,
+}
 SINGLE_HIRAGANA_PATTERN = re.compile(r"^[ぁ-ゖ]$")
 URL_PATTERN = re.compile(r"https?://\S+")
 MENTION_PATTERN = re.compile(r"<@!?\d+>")
@@ -79,11 +84,22 @@ def normalize_text(text: str) -> str:
     return unicodedata.normalize("NFKC", text).strip()
 
 
+def resolve_split_mode(mode: str) -> tokenizer.Tokenizer.SplitMode:
+    normalized_mode = mode.strip().upper()
+
+    if normalized_mode not in SPLIT_MODE_MAP:
+        raise ValueError("split mode must be one of A, B, C")
+
+    return SPLIT_MODE_MAP[normalized_mode]
+
+
 def _is_target_token(word: str, pos: tuple[str, ...]) -> bool:
     if word in STOP_WORDS:
         return False
 
     if pos[0] == "接尾辞":
+        if len(pos) < 2 or pos[1] not in {"形状詞的", "名詞的"}:
+            return False
         # Exclude counters like "つ" (接尾辞-名詞的-助数詞)
         if len(pos) > 2 and pos[2] == "助数詞":
             return False
@@ -135,6 +151,19 @@ def extract_tokens_with_indices(text: str) -> list[tuple[str, int]]:
             words_with_indices.append((word, index))
 
     return words_with_indices
+
+
+def analyze_sudachi_pos(
+    text: str,
+    mode: str = "C",
+) -> list[tuple[str, tuple[str, ...], str]]:
+    split_mode = resolve_split_mode(mode)
+    tokens = tokenizer_obj.tokenize(text, split_mode)
+
+    return [
+        (token.surface(), tuple(token.part_of_speech()), token.dictionary_form())
+        for token in tokens
+    ]
 
 
 def generate_ngrams(tokens: list[str], n: int) -> list[tuple[str, ...]]:
