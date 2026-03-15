@@ -10,9 +10,6 @@ from discord.ext import commands, tasks
 from libs.embed import EmbedHelper
 from libs.wordcloud_service import (
     build_wordcloud_source_text,
-    extract_learning_cursor,
-    fetch_legacy_last_learn_id,
-    fetch_last_learn_cursor,
     fetch_learning_documents,
     fetch_wordcloud_documents,
     generate_wordcloud_image,
@@ -25,15 +22,7 @@ from libs.wordcloud_service import (
     should_execute_schedule,
     update_compounds,
     update_last_executed,
-    update_last_learn_cursor,
     update_last_learn_id,
-)
-from libs.settings_store import (
-    delete_guild_schedule,
-    find_guild_schedule,
-    insert_guild_schedule,
-    list_enabled_schedules,
-    list_guild_schedules,
 )
 
 
@@ -293,11 +282,12 @@ class WordCloud(commands.Cog):
 
         # 既存の設定をチェック
         existing = await asyncio.to_thread(
-            find_guild_schedule,
-            self.bot.db,
-            str(interaction.guild_id),
-            str(channel.id),
-            frequency.value,
+            self.bot.db.guild_settings.find_one,
+            {
+                "guild_id": str(interaction.guild_id),
+                "channel_id": str(channel.id),
+                "frequency": frequency.value,
+            },
         )
 
         if existing:
@@ -311,12 +301,15 @@ class WordCloud(commands.Cog):
         # 新しい設定を追加
         try:
             await asyncio.to_thread(
-                insert_guild_schedule,
-                self.bot.db,
-                str(interaction.guild_id),
-                str(channel.id),
-                frequency.value,
-                f"{parsed_time[0]:02d}:{parsed_time[1]:02d}",
+                self.bot.db.guild_settings.insert_one,
+                {
+                    "guild_id": str(interaction.guild_id),
+                    "channel_id": str(channel.id),
+                    "frequency": frequency.value,
+                    "schedule_time": f"{parsed_time[0]:02d}:{parsed_time[1]:02d}",
+                    "enabled": True,
+                    "last_executed": None,
+                },
             )
 
             embed = embed_helper.create_success_embed(
@@ -362,9 +355,13 @@ class WordCloud(commands.Cog):
 
         try:
             settings = await asyncio.to_thread(
-                list_guild_schedules,
-                self.bot.db,
-                str(interaction.guild_id),
+                lambda: list(
+                    self.bot.db.guild_settings.find(
+                        {
+                            "guild_id": str(interaction.guild_id),
+                        }
+                    )
+                )
             )
 
             if not settings:
@@ -460,11 +457,12 @@ class WordCloud(commands.Cog):
 
         try:
             result = await asyncio.to_thread(
-                delete_guild_schedule,
-                self.bot.db,
-                str(interaction.guild_id),
-                str(channel.id),
-                frequency.value,
+                self.bot.db.guild_settings.delete_one,
+                {
+                    "guild_id": str(interaction.guild_id),
+                    "channel_id": str(channel.id),
+                    "frequency": frequency.value,
+                },
             )
 
             if result.deleted_count == 0:
@@ -497,8 +495,7 @@ class WordCloud(commands.Cog):
         # 有効な設定を取得
         try:
             settings = await asyncio.to_thread(
-                list_enabled_schedules,
-                self.bot.db,
+                lambda: list(self.bot.db.guild_settings.find({"enabled": True}))
             )
         except Exception as e:
             print(f"Error fetching scheduled wordcloud settings: {e}")
@@ -615,16 +612,10 @@ class WordCloud(commands.Cog):
     async def background_learn(self):
         try:
             def _learn_batch_sync() -> None:
-                last_cursor = fetch_last_learn_cursor(self.bot.db)
-                legacy_last_id = None
-
-                if last_cursor is None:
-                    legacy_last_id = fetch_legacy_last_learn_id(self.bot.db)
-
+                last_id = self.bot.db.meta.find_one({"_id": "last_learn_id"})
                 docs = fetch_learning_documents(
                     self.bot.db,
-                    last_cursor,
-                    legacy_last_id=legacy_last_id,
+                    last_id["value"] if last_id else None,
                 )
 
                 if not docs:
@@ -632,12 +623,7 @@ class WordCloud(commands.Cog):
 
                 texts = [build_wordcloud_source_text([doc]) for doc in docs]
                 learn_from_texts(self.bot.db, texts)
-
-                new_cursor = extract_learning_cursor(docs[-1])
-                if new_cursor is not None:
-                    update_last_learn_cursor(self.bot.db, new_cursor)
-                elif legacy_last_id is not None and docs[-1].get("_id") is not None:
-                    update_last_learn_id(self.bot.db, docs[-1]["_id"])
+                update_last_learn_id(self.bot.db, docs[-1]["_id"])
 
             await asyncio.to_thread(_learn_batch_sync)
         except Exception as error:

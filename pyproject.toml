@@ -5,7 +5,6 @@ description = "This is a Discord bot that analyzes the frequency of words used i
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "clickhouse-connect>=0.8.18",
     "discord-py>=2.7.1",
     "matplotlib>=3.10.8",
     "networkx>=3.6.1",

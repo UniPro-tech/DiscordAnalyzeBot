@@ -6,10 +6,7 @@ services:
     restart: unless-stopped
     environment:
       DISCORD_TOKEN: your_discord_bot_token_here
-      STORAGE_BACKEND: hybrid
-      MIGRATION: "false"
       MONGODB_DSN: mongodb://analyze-bot:rootpassword@mongodb:27017/analyze-bot?authSource=admin
-      CLICKHOUSE_DSN: http://default:clickhousepassword@clickhouse:8123/analyze_bot
       ADMIN_USER_ID: your_admin_user_id_here
   mongodb:
     image: mongo:latest
@@ -32,22 +29,8 @@ services:
       ME_CONFIG_MONGODB_SERVER: mongodb
     ports:
       - "8081:8081"
-  clickhouse:
-    image: clickhouse/clickhouse-server:24.8
-    container_name: analyze-bot-clickhouse
-    restart: unless-stopped
-    environment:
-      CLICKHOUSE_DB: analyze_bot
-      CLICKHOUSE_USER: default
-      CLICKHOUSE_PASSWORD: clickhousepassword
-    ports:
-      - "8123:8123"
-      - "9000:9000"
-    volumes:
-      - clickhouse_data:/var/lib/clickhouse
 volumes:
   mongodb_data:
-  clickhouse_data:
 networks:
   analyze-bot-network:
     driver: bridge

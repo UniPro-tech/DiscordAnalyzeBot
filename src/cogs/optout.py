@@ -4,7 +4,6 @@ from discord.ext import commands
 from discord import app_commands
 from libs.embed import EmbedHelper
 from libs.message_store import delete_messages_by_query
-from libs.settings_store import set_channel_opt_out, set_user_opt_out
 
 
 class Optout(commands.Cog):
@@ -65,10 +64,10 @@ class Optout(commands.Cog):
 
         try:
             await asyncio.to_thread(
-                set_user_opt_out,
-                self.bot.db,
-                user_id,
-                opt_out_value,
+                self.bot.db.user_settings.update_one,
+                {"user_id": user_id},
+                {"$set": {"opt_out": opt_out_value}},
+                upsert=True,
             )
         except Exception as e:
             print(f"Error in optout command: {e}")
@@ -162,11 +161,10 @@ class Optout(commands.Cog):
 
         try:
             await asyncio.to_thread(
-                set_channel_opt_out,
-                self.bot.db,
-                guild_id,
-                channel_id,
-                opt_out_value,
+                self.bot.db.channel_settings.update_one,
+                {"guild_id": guild_id, "channel_id": channel_id},
+                {"$set": {"opt_out": opt_out_value}},
+                upsert=True,
             )
         except Exception as e:
             print(f"Error in optout channel command: {e}")

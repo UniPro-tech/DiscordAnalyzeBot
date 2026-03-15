@@ -19,9 +19,6 @@ from libs.text_processing import (
     join_message_content,
     normalize_text,
 )
-from libs.message_store import fetch_messages
-from libs.meta_store import delete_meta_key, get_meta_value, set_meta_value
-from libs.settings_store import update_schedule_last_executed
 import matplotlib.pyplot as plt
 from wordcloud import WordCloud
 
@@ -30,59 +27,6 @@ PMI_THRESHOLD = 3
 COUNT_THRESHOLD = 10
 DEFAULT_MESSAGE_LIMIT = 3000
 JST = ZoneInfo("Asia/Tokyo")
-LEARN_CURSOR_META_KEY = "last_learn_cursor"
-LEGACY_LEARN_ID_META_KEY = "last_learn_id"
-
-
-def _is_clickhouse(db) -> bool:
-    return getattr(db, "backend", "mongo") in {"clickhouse", "hybrid"}
-
-
-def _learning_db(db):
-    if getattr(db, "backend", "mongo") == "hybrid":
-        return db.db_clickhouse
-    return db
-
-
-def setup_learning_tables(db) -> None:
-    if not _is_clickhouse(db):
-        return
-
-    db = _learning_db(db)
-
-    db.command(
-        """
-        CREATE TABLE IF NOT EXISTS unigrams (
-            word String,
-            count UInt64
-        )
-        ENGINE = SummingMergeTree
-        ORDER BY (word)
-        """
-    )
-
-    db.command(
-        """
-        CREATE TABLE IF NOT EXISTS ngrams (
-            ngram Array(String),
-            count UInt64
-        )
-        ENGINE = SummingMergeTree
-        ORDER BY (ngram)
-        """
-    )
-
-    db.command(
-        """
-        CREATE TABLE IF NOT EXISTS compounds (
-            word String,
-            pmi Float64,
-            updated_at DateTime64(3, 'UTC') DEFAULT now64(3)
-        )
-        ENGINE = ReplacingMergeTree(updated_at)
-        ORDER BY (word)
-        """
-    )
 
 
 def parse_during_days(during: Optional[str]) -> int | None:
@@ -166,22 +110,13 @@ def fetch_wordcloud_documents(
         channel_id=channel_id,
         role_id=role_id,
     )
-    return fetch_messages(
-        db,
-        query,
-        {"content": 1, "tokens": 1},
-        sort_field="timestamp",
-        sort_order=-1,
-        limit=limit,
+
+    return list(
+        db.messages.find(query, {"content": 1, "tokens": 1}).sort("timestamp", -1).limit(limit)
     )
 
 
 def save_unigram(db, token: str) -> None:
-    if _is_clickhouse(db):
-        db = _learning_db(db)
-        db.insert_rows("unigrams", [[token, 1]], ["word", "count"])
-        return
-
     db.unigrams.update_one(
         {"word": token},
         {"$inc": {"count": 1}},
@@ -190,11 +125,6 @@ def save_unigram(db, token: str) -> None:
 
 
 def save_ngram(db, ngram: tuple[str, ...]) -> None:
-    if _is_clickhouse(db):
-        db = _learning_db(db)
-        db.insert_rows("ngrams", [[[str(word) for word in ngram], 1]], ["ngram", "count"])
-        return
-
     db.ngrams.update_one(
         {"ngram": list(ngram)},
         {"$inc": {"count": 1}},
@@ -203,10 +133,6 @@ def save_ngram(db, ngram: tuple[str, ...]) -> None:
 
 
 def get_total_unigram_count(db) -> int:
-    if _is_clickhouse(db):
-        db = _learning_db(db)
-        return int(db.query_scalar("SELECT sum(count) AS total FROM unigrams") or 0)
-
     result = db.unigrams.aggregate(
         [{"$group": {"_id": None, "total": {"$sum": "$count"}}}]
     )
@@ -308,19 +234,6 @@ def learn_from_texts(db, texts: list[str], workers: int = 4) -> None:
                 raise
             _aggregate_sequential()
 
-    if _is_clickhouse(db):
-        db = _learning_db(db)
-        unigram_rows = [[token, int(cnt)] for token, cnt in unigram_agg.items()]
-        ngram_rows = [[[str(word) for word in ngram], int(cnt)] for ngram, cnt in ngram_agg.items()]
-
-        if unigram_rows:
-            db.insert_rows("unigrams", unigram_rows, ["word", "count"])
-
-        if ngram_rows:
-            db.insert_rows("ngrams", ngram_rows, ["ngram", "count"])
-
-        return
-
     # 一括更新のためのUpdateOneオペレーションを作成して、DBに反映する。
     unigram_ops = [
         UpdateOne({"word": token}, {"$inc": {"count": cnt}}, upsert=True)
@@ -364,11 +277,6 @@ def _compute_bigram_pmi(db, left_word: str, right_word: str, total: int) -> floa
 
 
 def update_compounds(db) -> None:
-    if _is_clickhouse(db):
-        _update_compounds_clickhouse(_learning_db(db))
-        clear_extract_tokens_cache()
-        return
-
     # 全unigramの総数を取得。PMI計算で参照するため。
     total = get_total_unigram_count(db)
 
@@ -464,21 +372,6 @@ def update_compounds(db) -> None:
 
 
 def load_compounds(db) -> set[str]:
-    if _is_clickhouse(db):
-        db = _learning_db(db)
-        rows = db.query_dicts(
-            """
-            SELECT word
-            FROM (
-                SELECT word,
-                    row_number() OVER (PARTITION BY word ORDER BY updated_at DESC) AS rn
-                FROM compounds
-            )
-            WHERE rn = 1
-            """
-        )
-        return {row["word"] for row in rows if row.get("word")}
-
     return {doc["word"] for doc in db.compounds.find()}
 
 
@@ -608,132 +501,38 @@ def should_execute_schedule(
 
 
 def update_last_executed(db, guild_id: str, channel_id: str, frequency: str) -> None:
-    update_schedule_last_executed(
-        db,
-        guild_id,
-        channel_id,
-        frequency,
-        discord_utcnow(),
+    db.guild_settings.update_one(
+        {
+            "guild_id": guild_id,
+            "channel_id": channel_id,
+            "frequency": frequency,
+        },
+        {"$set": {"last_executed": discord_utcnow().isoformat()}},
     )
 
 
-def build_learning_cursor_query(last_cursor: dict | None) -> dict:
-    if last_cursor is None:
-        return {}
+def fetch_learning_documents(db, last_id, limit: int = 500) -> list[dict]:
+    query = {}
 
-    timestamp = last_cursor.get("timestamp")
-    message_id = last_cursor.get("message_id")
+    if last_id is not None:
+        query["_id"] = {"$gt": last_id}
 
-    if not isinstance(timestamp, str) or not isinstance(message_id, str):
-        return {}
-
-    return {
-        "$or": [
-            {"timestamp": {"$gt": timestamp}},
-            {
-                "timestamp": timestamp,
-                "message_id": {"$gt": message_id},
-            },
-        ]
-    }
-
-
-def fetch_last_learn_cursor(db) -> dict | None:
-    value = get_meta_value(db, LEARN_CURSOR_META_KEY)
-
-    if not isinstance(value, dict):
-        return None
-
-    if not isinstance(value.get("timestamp"), str):
-        return None
-
-    if not isinstance(value.get("message_id"), str):
-        return None
-
-    return {
-        "timestamp": value["timestamp"],
-        "message_id": value["message_id"],
-    }
-
-
-def fetch_legacy_last_learn_id(db):
-    return get_meta_value(db, LEGACY_LEARN_ID_META_KEY)
-
-
-def fetch_learning_documents(
-    db,
-    last_cursor: dict | None,
-    *,
-    legacy_last_id=None,
-    limit: int = 500,
-) -> list[dict]:
-    is_clickhouse = _is_clickhouse(db)
-
-    projection = {
-        "content": 1,
-        "timestamp": 1,
-        "message_id": 1,
-    }
-
-    if not is_clickhouse:
-        projection["_id"] = 1
-
-    if not is_clickhouse and last_cursor is None and legacy_last_id is not None:
-        query = {"_id": {"$gt": legacy_last_id}}
-        return list(db.messages.find(query, projection).sort("_id", 1).limit(limit))
-
-    query = build_learning_cursor_query(last_cursor)
-    return fetch_messages(
-        db,
-        query,
-        projection,
-        sort_field=[("timestamp", 1), ("message_id", 1)],
-        limit=limit,
-    )
-
-
-def extract_learning_cursor(doc: dict) -> dict | None:
-    timestamp = doc.get("timestamp")
-    message_id = doc.get("message_id")
-
-    if not isinstance(timestamp, str) or not timestamp:
-        return None
-
-    if message_id is None:
-        return None
-
-    normalized_message_id = str(message_id)
-    if not normalized_message_id:
-        return None
-
-    return {
-        "timestamp": timestamp,
-        "message_id": normalized_message_id,
-    }
-
-
-def update_last_learn_cursor(db, last_cursor: dict) -> None:
-    set_meta_value(db, LEARN_CURSOR_META_KEY, last_cursor)
+    return list(db.messages.find(query, {"content": 1}).sort("_id", 1).limit(limit))
 
 
 def update_last_learn_id(db, last_id) -> None:
-    # Compatibility helper for existing deployments that still keep legacy progress.
-    set_meta_value(db, LEGACY_LEARN_ID_META_KEY, last_id)
+    db.meta.update_one(
+        {"_id": "last_learn_id"},
+        {"$set": {"value": last_id}},
+        upsert=True,
+    )
 
 
 def reset_learning_state(db) -> None:
-    if _is_clickhouse(db):
-        db = _learning_db(db)
-        db.command("TRUNCATE TABLE IF EXISTS unigrams")
-        db.command("TRUNCATE TABLE IF EXISTS ngrams")
-        db.command("TRUNCATE TABLE IF EXISTS compounds")
-    else:
-        db.unigrams.delete_many({})
-        db.ngrams.delete_many({})
-        db.compounds.delete_many({})
-
-    delete_meta_key(db, LEARN_CURSOR_META_KEY)
-    delete_meta_key(db, LEGACY_LEARN_ID_META_KEY)
+    db.unigrams.delete_many({})
+    db.ngrams.delete_many({})
+    db.compounds.delete_many({})
+    db.meta.delete_one({"_id": "last_learn_id"})
     clear_extract_tokens_cache()
 
 
@@ -760,9 +559,6 @@ def get_schedule_during_days(frequency: str, now_jst: datetime) -> int | None:
 
 def migrate_message_tokens(db, batch_size: int = 500) -> int:
     """起動時マイグレーション: tokensフィールドが未付与のメッセージをバッチ処理して一括保存する。"""
-    if _is_clickhouse(db):
-        return 0
-
     total = 0
     query = {"tokens": {"$exists": False}, "content": {"$type": "string", "$ne": ""}}
 
@@ -785,93 +581,3 @@ def migrate_message_tokens(db, batch_size: int = 500) -> int:
             total += len(ops)
 
     return total
-
-
-def _update_compounds_clickhouse(db) -> None:
-    total = get_total_unigram_count(db)
-    if total == 0:
-        return
-
-    unigram_docs = db.query_dicts(
-        "SELECT word, sum(count) AS count FROM unigrams GROUP BY word"
-    )
-    unigram_counts: dict[str, int] = {
-        str(doc["word"]): int(doc["count"]) for doc in unigram_docs if doc.get("word")
-    }
-
-    if not unigram_counts:
-        return
-
-    ngram_docs = db.query_dicts(
-        "SELECT ngram, sum(count) AS count FROM ngrams GROUP BY ngram"
-    )
-
-    bigram_counts: dict[tuple[str, str], int] = {}
-    for doc in ngram_docs:
-        words = tuple(str(word) for word in (doc.get("ngram") or []))
-        if len(words) == 2:
-            bigram_counts[words] = int(doc.get("count", 0))
-
-    accepted_bigrams: dict[tuple[str, str], float] = {}
-    compound_map: dict[str, float] = {}
-
-    for doc in ngram_docs:
-        ngram_words = tuple(str(word) for word in (doc.get("ngram") or []))
-        count_xy = int(doc.get("count", 0))
-        ngram_size = len(ngram_words)
-
-        if count_xy < COUNT_THRESHOLD:
-            continue
-
-        if ngram_size == 2:
-            w1, w2 = ngram_words
-            ux = unigram_counts.get(w1)
-            uy = unigram_counts.get(w2)
-            if ux is None or uy is None:
-                continue
-
-            pmi = compute_pmi(count_xy, ux, uy, total)
-            if pmi is None or pmi < PMI_THRESHOLD:
-                continue
-
-            compound_map[w1 + w2] = pmi
-            accepted_bigrams[(w1, w2)] = pmi
-            continue
-
-        if ngram_size == 3:
-            w1, w2, w3 = ngram_words
-            ux = unigram_counts.get(w1)
-            uy = unigram_counts.get(w2)
-            uz = unigram_counts.get(w3)
-            if ux is None or uy is None or uz is None:
-                continue
-
-            left_count = bigram_counts.get((w1, w2))
-            right_count = bigram_counts.get((w2, w3))
-            if left_count is None or right_count is None:
-                continue
-
-            left_pmi = compute_pmi(left_count, ux, uy, total)
-            right_pmi = compute_pmi(right_count, uy, uz, total)
-            if left_pmi is None or right_pmi is None:
-                continue
-
-            pmi = min(left_pmi, right_pmi)
-            if pmi < PMI_THRESHOLD:
-                continue
-
-            compound_map["".join(ngram_words)] = pmi
-
-    bigrams_by_left: dict[str, list[tuple[str, float]]] = {}
-    for (left_word, right_word), pmi in accepted_bigrams.items():
-        bigrams_by_left.setdefault(left_word, []).append((right_word, pmi))
-
-    for (w1, w2), left_pmi in accepted_bigrams.items():
-        for w3, right_pmi in bigrams_by_left.get(w2, []):
-            trigram_pmi = min(left_pmi, right_pmi)
-            if trigram_pmi >= PMI_THRESHOLD:
-                compound_map[w1 + w2 + w3] = trigram_pmi
-
-    rows = [[word, float(pmi)] for word, pmi in compound_map.items()]
-    if rows:
-        db.insert_rows("compounds", rows, ["word", "pmi"])
