@@ -46,7 +46,6 @@ STOP_WORDS = {
     "みたい",
     "やっぱ",
     "多く",
-    "そもそも",
 }
 
 tokenizer_obj = dictionary.Dictionary().create()
