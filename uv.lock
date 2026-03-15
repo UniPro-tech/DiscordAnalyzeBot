@@ -133,7 +133,7 @@ wheels = [
 
 [[package]]
 name = "analyze-bot"
-version = "0.8.20"
+version = "0.8.19"
 source = { virtual = "." }
 dependencies = [
     { name = "clickhouse-connect" },
