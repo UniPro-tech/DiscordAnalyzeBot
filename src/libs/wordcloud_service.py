@@ -124,8 +124,6 @@ def build_wordcloud_message_query(
     query = {
         "guild_id": guild_id,
         "content": {"$type": "string", "$ne": ""},
-        # tokens が存在するメッセージのみを対象にする（トークン化済みのみ取得）
-        "tokens": {"$exists": True},
     }
 
     if during_days is not None:
@@ -787,17 +785,6 @@ def migrate_message_tokens(db, batch_size: int = 500) -> int:
             total += len(ops)
 
     return total
-
-
-def count_unmigrated_tokens(db) -> int:
-    """トークン未生成（tokens フィールドが存在しない）メッセージ件数を返す。
-    ClickHouse 環境では常に 0 を返す（マイグレーション不要）。
-    """
-    if _is_clickhouse(db):
-        return 0
-
-    query = {"tokens": {"$exists": False}, "content": {"$type": "string", "$ne": ""}}
-    return int(db.messages.count_documents(query))
 
 
 def _update_compounds_clickhouse(db) -> None:

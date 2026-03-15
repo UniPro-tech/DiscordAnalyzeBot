@@ -67,13 +67,8 @@ def _build_where_clause(query: dict, params: dict, *, prefix: str = "p") -> str:
             if "$ne" in expected:
                 params[param_key] = str(expected["$ne"])
                 conditions.append(f"{key} != {{{param_key}:String}}")
-            if "$exists" in expected:
-                # ClickHouse 側では $exists を解釈できないため、必要なケースだけ SQL に変換する。
-                # 現状は tokens の存在確認を配列要素が空でないことを確認する形で変換する。
-                if key == "tokens" and expected["$exists"]:
-                    conditions.append("arrayExists(x -> x != '', tokens)")
 
-            # $type は ClickHouse 側での型設計前提なのでここでは無視する。
+            # $type / $exists は ClickHouse 側での型設計前提なのでここでは無視する。
             continue
 
         params[param_key] = str(expected)

@@ -13,8 +13,6 @@ from libs.wordcloud_service import (
     reset_learning_state,
     update_compounds,
     update_last_learn_cursor,
-    migrate_message_tokens,
-    count_unmigrated_tokens,
 )
 
 
@@ -32,8 +30,6 @@ class Admin(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self._relearn_lock = asyncio.Lock()
-        self._migrate_lock = asyncio.Lock()
-        self._migrate_task: asyncio.Task | None = None
 
     def _is_admin_user(self, user_id: int) -> bool:
         return ADMIN_USER_ID is not None and user_id == ADMIN_USER_ID
@@ -115,125 +111,6 @@ class Admin(commands.Cog):
                 "学習データ（unigrams / ngrams / compounds / last_learn_cursor）をリセットして、"
                 f"{learned_message_count}件のメッセージを再学習しました。"
             ),
-        )
-        await interaction.followup.send(embed=embed, ephemeral=True)
-
-    migrate_group = admin_group.Group(
-        name="migrate",
-        description="マイグレーション関連のコマンド",
-    )
-
-    @migrate_group.command(
-        name="status",
-        description="トークンマイグレーションの未処理件数を表示します（管理者向け）",
-    )
-    async def migrate_status(self, interaction: discord.Interaction):
-        embed_helper = EmbedHelper(function_name="Admin Migrate Status")
-
-        if ADMIN_USER_ID is None:
-            embed = embed_helper.create_error_embed(
-                title="設定エラー",
-                description="config.py に ADMIN_USER_ID が設定されていません。",
-            )
-            await interaction.response.send_message(embed=embed, ephemeral=True)
-            return
-
-        if not self._is_admin_user(interaction.user.id):
-            embed = embed_helper.create_error_embed(
-                title="権限エラー",
-                description="このコマンドは管理者のみ実行できます。",
-            )
-            await interaction.response.send_message(embed=embed, ephemeral=True)
-            return
-
-        await interaction.response.defer(ephemeral=True, thinking=True)
-
-        try:
-            remaining = await asyncio.to_thread(count_unmigrated_tokens, self.bot.db)
-        except Exception as error:
-            embed = embed_helper.create_error_embed(
-                title="エラー",
-                description="データベース問い合わせ中にエラーが発生しました。",
-            )
-            await interaction.followup.send(embed=embed, ephemeral=True)
-            print(f"[Admin] migrate_status DB error: {error}")
-            return
-
-        embed = embed_helper.create_success_embed(
-            title="マイグレーション状況",
-            description=(
-                f"tokens 未生成メッセージ数: {remaining}\n"
-                "※ClickHouse 環境では常に 0 を返します。"
-            ),
-        )
-        await interaction.followup.send(embed=embed, ephemeral=True)
-
-    @migrate_group.command(
-        name="start",
-        description="起動時マイグレーションを手動で実行します（管理者向け、非同期で実行）",
-    )
-    async def migrate_start(self, interaction: discord.Interaction):
-        embed_helper = EmbedHelper(function_name="Admin Migrate Start")
-
-        if ADMIN_USER_ID is None:
-            embed = embed_helper.create_error_embed(
-                title="設定エラー",
-                description="config.py に ADMIN_USER_ID が設定されていません。",
-            )
-            await interaction.response.send_message(embed=embed, ephemeral=True)
-            return
-
-        if not self._is_admin_user(interaction.user.id):
-            embed = embed_helper.create_error_embed(
-                title="権限エラー",
-                description="このコマンドは管理者のみ実行できます。",
-            )
-            await interaction.response.send_message(embed=embed, ephemeral=True)
-            return
-
-        if self._migrate_lock.locked():
-            embed = embed_helper.create_warning_embed(
-                title="処理中",
-                description="既にマイグレーションが実行中です。完了を待ってください。",
-            )
-            await interaction.response.send_message(embed=embed, ephemeral=True)
-            return
-
-        await interaction.response.defer(ephemeral=True, thinking=True)
-
-        # Acquire lock and start background migration task; the lock will be
-        # released by the background task when finished.
-        await self._migrate_lock.acquire()
-
-        async def _bg_migrate(inter: discord.Interaction):
-            try:
-                try:
-                    count = await asyncio.to_thread(migrate_message_tokens, self.bot.db)
-                except Exception as error:
-                    embed = embed_helper.create_error_embed(
-                        title="マイグレーションエラー",
-                        description="マイグレーション実行中にエラーが発生しました。ログを確認してください。",
-                    )
-                    await inter.followup.send(embed=embed, ephemeral=True)
-                    print(f"[Admin] migrate_start failed: {error}")
-                    return
-
-                embed = embed_helper.create_success_embed(
-                    title="マイグレーション完了",
-                    description=f"更新済みメッセージ数: {count}",
-                )
-                await inter.followup.send(embed=embed, ephemeral=True)
-            finally:
-                try:
-                    self._migrate_lock.release()
-                except RuntimeError:
-                    pass
-
-        self._migrate_task = asyncio.create_task(_bg_migrate(interaction))
-
-        embed = embed_helper.create_success_embed(
-            title="マイグレーション開始",
-            description="バックグラウンドでマイグレーションを開始しました。完了後に通知します。",
         )
         await interaction.followup.send(embed=embed, ephemeral=True)
 
