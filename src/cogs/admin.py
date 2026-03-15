@@ -33,6 +33,7 @@ class Admin(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self._relearn_lock = asyncio.Lock()
+        self._relearn_task: asyncio.Task | None = None
         self._migrate_lock = asyncio.Lock()
         self._migrate_task: asyncio.Task | None = None
 
@@ -188,27 +189,46 @@ class Admin(commands.Cog):
 
         await interaction.response.defer(ephemeral=True, thinking=True)
 
-        async with self._relearn_lock:
+        # Acquire lock and start background relearn task; the lock will be
+        # released by the background task when finished.
+        await self._relearn_lock.acquire()
+
+        async def _bg_relearn(inter: discord.Interaction):
             try:
-                learned_message_count, remigrated_token_count = await asyncio.to_thread(
-                    self._reset_and_relearn_sync
+                try:
+                    learned_message_count, remigrated_token_count = await asyncio.to_thread(
+                        self._reset_and_relearn_sync
+                    )
+                except Exception as error:
+                    embed = embed_helper.create_error_embed(
+                        title="再学習エラー",
+                        description="再学習中にエラーが発生しました。ログを確認してください。",
+                    )
+                    await inter.followup.send(embed=embed, ephemeral=True)
+                    print(f"[Admin] Reset learn command failed: {error}")
+                    return
+
+                embed = embed_helper.create_success_embed(
+                    title="再学習完了",
+                    description=(
+                        "学習データと message tokens をリセットして、"
+                        f"tokens を {remigrated_token_count}件再生成し、"
+                        f"{learned_message_count}件のメッセージを再学習しました。"
+                    ),
                 )
-            except Exception as error:
-                embed = embed_helper.create_error_embed(
-                    title="再学習エラー",
-                    description="再学習中にエラーが発生しました。ログを確認してください。",
-                )
-                await interaction.followup.send(embed=embed, ephemeral=True)
-                print(f"[Admin] Reset learn command failed: {error}")
-                return
+                await inter.followup.send(embed=embed, ephemeral=True)
+            finally:
+                self._relearn_task = None
+                try:
+                    self._relearn_lock.release()
+                except RuntimeError:
+                    pass
+
+        self._relearn_task = asyncio.create_task(_bg_relearn(interaction))
 
         embed = embed_helper.create_success_embed(
-            title="再学習完了",
-            description=(
-                "学習データと message tokens をリセットして、"
-                f"tokens を {remigrated_token_count}件再生成し、"
-                f"{learned_message_count}件のメッセージを再学習しました。"
-            ),
+            title="再学習開始",
+            description="バックグラウンドで再学習を開始しました。完了後に通知します。",
         )
         await interaction.followup.send(embed=embed, ephemeral=True)
 
