@@ -790,15 +790,22 @@ def migrate_message_tokens(db, batch_size: int = 500) -> int:
 
         return total
 
-    # ClickHouse / hybrid 環境の処理: ClickHouse は UPDATE を使って tokens を設定する。
+    # ClickHouse / hybrid 環境の処理: 既存レコードで tokens が NULL のものだけを更新する。
+    # 空配列は「トークン化済み・抽出ゼロ」の正常ケースなので対象外。
     msg_db = db
     if getattr(db, "backend", "mongo") == "hybrid":
         msg_db = db.db_clickhouse
 
-    query = {"tokens": {"$exists": False}, "content": {"$type": "string", "$ne": ""}}
-
     while True:
-        docs = fetch_messages(db, query, {"message_id": 1, "content": 1}, limit=batch_size)
+        docs = msg_db.query_dicts(
+            (
+                "SELECT message_id, content FROM messages "
+                "WHERE tokens IS NULL AND content != '' "
+                "LIMIT {limit:UInt32}"
+            ),
+            {"limit": int(batch_size)},
+        )
+
         if not docs:
             break
 
@@ -808,7 +815,6 @@ def migrate_message_tokens(db, batch_size: int = 500) -> int:
                 continue
 
             tokens = list(extract_tokens(normalize_text(content)))
-            # ClickHouse に対しては行単位で UPDATE を発行する
             try:
                 msg_db.command(
                     "ALTER TABLE messages UPDATE tokens = {tokens:Array(String)} WHERE message_id = {message_id:String}",
@@ -816,7 +822,6 @@ def migrate_message_tokens(db, batch_size: int = 500) -> int:
                 )
                 total += 1
             except Exception:
-                # 失敗しても処理を継続する
                 continue
 
     return total
@@ -831,15 +836,14 @@ def count_unmigrated_tokens(db) -> int:
         query = {"tokens": {"$exists": False}, "content": {"$type": "string", "$ne": ""}}
         return int(db.messages.count_documents(query))
 
-    # ClickHouse / hybrid 環境では SQL を発行して未生成のメッセージを数える
+    # ClickHouse / hybrid: tokens が NULL のレコードのみ未処理と見なす。空配列は正常ケース。
     msg_db = db
     if getattr(db, "backend", "mongo") == "hybrid":
         msg_db = db.db_clickhouse
 
     sql = (
         "SELECT count() AS count FROM messages "
-        "WHERE (tokens IS NULL OR NOT arrayExists(x -> x != '', tokens)) "
-        "AND content != ''"
+        "WHERE tokens IS NULL AND content != ''"
     )
     return int(msg_db.query_scalar(sql) or 0)
 

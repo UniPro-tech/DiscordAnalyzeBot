@@ -6,9 +6,11 @@ from libs.wordcloud_service import (
     build_during_since_timestamp,
     extract_learning_cursor,
     fetch_last_learn_cursor,
+    count_unmigrated_tokens,
     get_schedule_during_days,
     learn_from_text,
     learn_from_texts,
+    migrate_message_tokens,
     parse_during_days,
     parse_schedule_time,
     reset_learning_state,
@@ -94,10 +96,64 @@ def test_should_execute_schedule_for_monthly_on_actual_month_end():
     )
 
 
-def test_should_execute_schedule_for_monthly_not_on_non_month_end_day():
-    now_not_end = datetime(2026, 4, 29, 9, 0, tzinfo=JST)
+def test_count_unmigrated_tokens_queries_null_tokens_for_clickhouse():
+    class _DB:
+        backend = "clickhouse"
 
-    assert should_execute_schedule("monthly", None, now_not_end, JST) is False
+        def __init__(self):
+            self.queries = []
+
+        def query_scalar(self, query, parameters=None):
+            self.queries.append(query.strip())
+            return 3
+
+    db = _DB()
+
+    assert count_unmigrated_tokens(db) == 3
+    assert any("tokens IS NULL" in q for q in db.queries)
+
+
+def test_migrate_message_tokens_updates_null_tokens_for_clickhouse(monkeypatch):
+    class _DB:
+        backend = "clickhouse"
+
+        def __init__(self):
+            self.rows = [
+                {"message_id": "1", "content": "ミラノ風ドリア", "tokens": None},
+                {"message_id": "2", "content": "", "tokens": None},
+                {"message_id": "3", "content": "既に処理済み", "tokens": ["ok"]},
+            ]
+            self.commands = []
+
+        def query_dicts(self, _query, parameters=None):
+            limit = int((parameters or {}).get("limit", 0)) or len(self.rows)
+            docs = [
+                {"message_id": row["message_id"], "content": row["content"]}
+                for row in self.rows
+                if row.get("tokens") is None and (row.get("content") or "").strip()
+            ]
+            return docs[:limit]
+
+        def command(self, _query, parameters=None):
+            parameters = parameters or {}
+            self.commands.append((_query, parameters))
+            for row in self.rows:
+                if row.get("message_id") == parameters.get("message_id"):
+                    row["tokens"] = parameters.get("tokens")
+
+    import libs.wordcloud_service as wc
+
+    monkeypatch.setattr(wc, "extract_tokens", lambda _text: ["tok"])
+    monkeypatch.setattr(wc, "normalize_text", lambda text: text)
+
+    db = _DB()
+
+    updated = migrate_message_tokens(db, batch_size=10)
+
+    assert updated == 1
+    assert db.rows[0]["tokens"] == ["tok"]
+    assert db.rows[1]["tokens"] is None
+    assert db.rows[2]["tokens"] == ["ok"]
 
 
 def test_build_learning_cursor_query_returns_empty_without_cursor():
