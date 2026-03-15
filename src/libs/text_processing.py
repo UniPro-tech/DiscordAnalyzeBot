@@ -48,6 +48,8 @@ STOP_WORDS = {
     "多く",
     "そもそも",
     "お疲れ様",
+    "はず",
+    "うち",
 }
 
 tokenizer_obj = dictionary.Dictionary().create()
