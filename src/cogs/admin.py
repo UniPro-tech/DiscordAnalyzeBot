@@ -156,11 +156,11 @@ class Admin(commands.Cog):
         await interaction.followup.send(embed=embed, ephemeral=True)
 
     @reset_group.command(
-        name="leran",
+        name="learn",
         description="学習データをリセットして全メッセージを再学習します",
     )
-    async def reset_leran(self, interaction: discord.Interaction):
-        embed_helper = EmbedHelper(function_name="Admin Reset Leran")
+    async def reset_learn(self, interaction: discord.Interaction):
+        embed_helper = EmbedHelper(function_name="Admin Reset learn")
 
         if ADMIN_USER_ID is None:
             embed = embed_helper.create_error_embed(
@@ -199,7 +199,7 @@ class Admin(commands.Cog):
                     description="再学習中にエラーが発生しました。ログを確認してください。",
                 )
                 await interaction.followup.send(embed=embed, ephemeral=True)
-                print(f"[Admin] Reset leran command failed: {error}")
+                print(f"[Admin] Reset learn command failed: {error}")
                 return
 
         embed = embed_helper.create_success_embed(
