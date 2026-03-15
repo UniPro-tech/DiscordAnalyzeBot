@@ -6,6 +6,13 @@ from libs.embed import EmbedHelper
 from libs.message_store import delete_messages_by_query
 
 
+OptoutTargetChannel = (
+    discord.TextChannel
+    | discord.VoiceChannel
+    | discord.ForumChannel
+)
+
+
 class Optout(commands.Cog):
     optout_group = app_commands.Group(
         name="optout",
@@ -121,7 +128,7 @@ class Optout(commands.Cog):
         self,
         interaction: discord.Interaction,
         optout: app_commands.Choice[str],
-        channel: discord.TextChannel | None = None,
+        channel: OptoutTargetChannel | None = None,
         recursive: app_commands.Choice[str] | None = None,
     ):
         embed_helper = EmbedHelper(function_name="Optout Channel")
@@ -136,12 +143,17 @@ class Optout(commands.Cog):
 
         target_channel = channel
         if target_channel is None:
-            if isinstance(interaction.channel, discord.TextChannel):
+            if isinstance(interaction.channel, (discord.TextChannel, discord.VoiceChannel, discord.ForumChannel)):
                 target_channel = interaction.channel
+            elif isinstance(interaction.channel, discord.Thread) and isinstance(
+                interaction.channel.parent,
+                discord.ForumChannel,
+            ):
+                target_channel = interaction.channel.parent
             else:
                 embed = embed_helper.create_error_embed(
                     title="チャンネル指定エラー",
-                    description="対象チャンネルを指定してください。テキストチャンネルでこのコマンドを実行するか、`channel` オプションでチャンネルを指定してください。",
+                    description="対象チャンネルを指定してください。テキスト・フォーラム投稿内でこのコマンドを実行するか、`channel` オプションでチャンネルを指定してください。",
                 )
                 await interaction.response.send_message(embed=embed, ephemeral=True)
                 return
@@ -175,10 +187,20 @@ class Optout(commands.Cog):
             await interaction.response.send_message(embed=embed, ephemeral=True)
             return
 
+        delete_query = {"guild_id": guild_id, "channel_id": channel_id}
+        if isinstance(target_channel, discord.ForumChannel):
+            delete_query = {
+                "guild_id": guild_id,
+                "$or": [
+                    {"channel_id": channel_id},
+                    {"parent_channel_id": channel_id},
+                ],
+            }
+
         if opt_out_value and recursive_value:
             asyncio.create_task(
                 self._delete_messages_background(
-                    {"guild_id": guild_id, "channel_id": channel_id},
+                    delete_query,
                     f"guild_id={guild_id},channel_id={channel_id}",
                 )
             )

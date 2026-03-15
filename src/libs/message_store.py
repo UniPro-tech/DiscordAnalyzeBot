@@ -1,6 +1,16 @@
-def is_channel_opted_out(db, guild_id: str, channel_id: str) -> bool:
+def is_channel_opted_out(
+    db,
+    guild_id: str,
+    channel_id: str,
+    parent_channel_id: str | None = None,
+) -> bool:
+    channel_ids = [channel_id]
+
+    if parent_channel_id is not None:
+        channel_ids.append(parent_channel_id)
+
     channel_opt_out = db.channel_settings.find_one(
-        {"guild_id": guild_id, "channel_id": channel_id}
+        {"guild_id": guild_id, "channel_id": {"$in": channel_ids}}
     )
 
     if channel_opt_out is None:
@@ -23,10 +33,11 @@ def get_opt_out_flags(
     guild_id: str,
     channel_id: str,
     user_id: str,
+    parent_channel_id: str | None = None,
 ) -> tuple[bool, bool]:
     """オプトアウトフラグをまとめて取得するユーティリティ関数。DBアクセスが伴うため、必要に応じて非同期で呼び出すこと。"""
     return (
-        is_channel_opted_out(db, guild_id, channel_id),
+        is_channel_opted_out(db, guild_id, channel_id, parent_channel_id),
         is_user_opted_out(db, user_id),
     )
 
