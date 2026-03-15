@@ -736,9 +736,25 @@ def reset_learning_state(db) -> None:
         db.ngrams.delete_many({})
         db.compounds.delete_many({})
 
+    reset_message_tokens(db)
+
     delete_meta_key(db, LEARN_CURSOR_META_KEY)
     delete_meta_key(db, LEGACY_LEARN_ID_META_KEY)
     clear_extract_tokens_cache()
+
+
+def reset_message_tokens(db) -> int:
+    if not _is_clickhouse(db):
+        result = db.messages.update_many({}, {"$set": {"tokens": None}})
+        return int(getattr(result, "modified_count", 0))
+
+    msg_db = db
+    if getattr(db, "backend", "mongo") == "hybrid":
+        msg_db = db.db_clickhouse
+
+    reset_count = int(msg_db.query_scalar("SELECT count() AS count FROM messages") or 0)
+    msg_db.command("ALTER TABLE messages UPDATE tokens = [] WHERE 1")
+    return reset_count
 
 
 def get_frequency_label(frequency: str) -> str:
@@ -762,13 +778,36 @@ def get_schedule_during_days(frequency: str, now_jst: datetime) -> int | None:
     return None
 
 
-def migrate_message_tokens(db, batch_size: int = 500) -> int:
+def migrate_message_tokens(db, batch_size: int = 500, *, force: bool = False) -> int:
     """起動時マイグレーション: tokensフィールドが未付与のメッセージをバッチ処理して一括保存する。"""
     total = 0
 
     # MongoDB 側の処理
     if not _is_clickhouse(db):
-        query = {"tokens": {"$exists": False}, "content": {"$type": "string", "$ne": ""}}
+        if force:
+            docs = list(db.messages.find({"content": {"$type": "string", "$ne": ""}}, {"_id": 1, "content": 1}))
+            ops = [
+                UpdateOne(
+                    {"_id": doc["_id"]},
+                    {"$set": {"tokens": extract_tokens(normalize_text(doc["content"]))}},
+                )
+                for doc in docs
+                if (doc.get("content") or "").strip()
+            ]
+
+            if ops:
+                db.messages.bulk_write(ops, ordered=False)
+                total += len(ops)
+
+            return total
+
+        query = {
+            "$or": [
+                {"tokens": {"$exists": False}},
+                {"tokens": None},
+            ],
+            "content": {"$type": "string", "$ne": ""},
+        }
 
         while True:
             docs = list(db.messages.find(query, {"_id": 1, "content": 1}).limit(batch_size))
@@ -795,6 +834,28 @@ def migrate_message_tokens(db, batch_size: int = 500) -> int:
     msg_db = db
     if getattr(db, "backend", "mongo") == "hybrid":
         msg_db = db.db_clickhouse
+
+    if force:
+        docs = msg_db.query_dicts(
+            "SELECT message_id, content FROM messages WHERE content != ''"
+        )
+
+        for doc in docs:
+            content = (doc.get("content") or "").strip()
+            if not content:
+                continue
+
+            tokens = list(extract_tokens(normalize_text(content)))
+            try:
+                msg_db.command(
+                    "ALTER TABLE messages UPDATE tokens = {tokens:Array(String)} WHERE message_id = {message_id:String}",
+                    {"tokens": tokens, "message_id": str(doc.get("message_id", ""))},
+                )
+                total += 1
+            except Exception:
+                continue
+
+        return total
 
     while True:
         docs = msg_db.query_dicts(
@@ -833,7 +894,13 @@ def count_unmigrated_tokens(db) -> int:
     """
     # Mongo の場合は count_documents を使う
     if not _is_clickhouse(db):
-        query = {"tokens": {"$exists": False}, "content": {"$type": "string", "$ne": ""}}
+        query = {
+            "$or": [
+                {"tokens": {"$exists": False}},
+                {"tokens": None},
+            ],
+            "content": {"$type": "string", "$ne": ""},
+        }
         return int(db.messages.count_documents(query))
 
     # ClickHouse / hybrid: tokens が NULL のレコードのみ未処理と見なす。空配列は正常ケース。

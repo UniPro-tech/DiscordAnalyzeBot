@@ -85,8 +85,9 @@ class Admin(commands.Cog):
 
         return "\n".join(truncated_lines)
 
-    def _reset_and_relearn_sync(self) -> int:
+    def _reset_and_relearn_sync(self) -> tuple[int, int]:
         reset_learning_state(self.bot.db)
+        remigrated_token_count = migrate_message_tokens(self.bot.db, force=True)
         last_cursor = None
         learned_message_count = 0
 
@@ -109,7 +110,7 @@ class Admin(commands.Cog):
                 break
 
         update_compounds(self.bot.db)
-        return learned_message_count
+        return learned_message_count, remigrated_token_count
 
     @admin_group.command(
         name="sudachi_pos",
@@ -189,7 +190,9 @@ class Admin(commands.Cog):
 
         async with self._relearn_lock:
             try:
-                learned_message_count = await asyncio.to_thread(self._reset_and_relearn_sync)
+                learned_message_count, remigrated_token_count = await asyncio.to_thread(
+                    self._reset_and_relearn_sync
+                )
             except Exception as error:
                 embed = embed_helper.create_error_embed(
                     title="再学習エラー",
@@ -202,7 +205,8 @@ class Admin(commands.Cog):
         embed = embed_helper.create_success_embed(
             title="再学習完了",
             description=(
-                "学習データ（unigrams / ngrams / compounds / last_learn_cursor）をリセットして、"
+                "学習データと message tokens をリセットして、"
+                f"tokens を {remigrated_token_count}件再生成し、"
                 f"{learned_message_count}件のメッセージを再学習しました。"
             ),
         )
