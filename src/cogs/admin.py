@@ -6,7 +6,6 @@ from discord.ext import commands
 
 from config import ADMIN_USER_ID
 from libs.embed import EmbedHelper
-from libs.text_processing import inspect_tokens_with_pos
 from libs.wordcloud_service import (
     extract_learning_cursor,
     fetch_learning_documents,
@@ -39,52 +38,6 @@ class Admin(commands.Cog):
     def _is_admin_user(self, user_id: int) -> bool:
         return ADMIN_USER_ID is not None and user_id == ADMIN_USER_ID
 
-    @staticmethod
-    def _format_sudachi_pos_description(result: dict) -> str:
-        normalized_text = result["normalized_text"] or "(空文字)"
-        extracted_tokens = result["extracted_tokens"]
-        tokens = result["tokens"]
-
-        lines = [
-            f"正規化後: {normalized_text}",
-            "抽出対象: " + (", ".join(extracted_tokens) if extracted_tokens else "(なし)"),
-            "",
-            "トークン一覧:",
-        ]
-
-        max_visible_tokens = 25
-        visible_tokens = tokens[:max_visible_tokens]
-        for token in visible_tokens:
-            pos = ", ".join(part for part in token["pos"] if part != "*") or "*"
-            target = "yes" if token["is_target"] else "no"
-            lines.append(
-                f"[{token['index']}] {token['surface']} | {pos} | target={target}"
-            )
-
-        hidden_count = len(tokens) - len(visible_tokens)
-        if hidden_count > 0:
-            lines.append(f"... {hidden_count}件省略")
-
-        description = "\n".join(lines)
-        if len(description) <= 4000:
-            return description
-
-        truncated_lines = lines[:4]
-        current_length = len("\n".join(truncated_lines))
-        for token in visible_tokens:
-            pos = ", ".join(part for part in token["pos"] if part != "*") or "*"
-            target = "yes" if token["is_target"] else "no"
-            line = f"[{token['index']}] {token['surface']} | {pos} | target={target}"
-            if current_length + len(line) + 1 > 3900:
-                break
-            truncated_lines.append(line)
-            current_length += len(line) + 1
-
-        if hidden_count > 0 or len(truncated_lines) - 4 < len(visible_tokens):
-            truncated_lines.append("... 出力を短縮したよ")
-
-        return "\n".join(truncated_lines)
-
     def _reset_and_relearn_sync(self) -> int:
         reset_learning_state(self.bot.db)
         last_cursor = None
@@ -110,49 +63,6 @@ class Admin(commands.Cog):
 
         update_compounds(self.bot.db)
         return learned_message_count
-
-    @admin_group.command(
-        name="sudachi_pos",
-        description="SudachiPy の品詞解析結果を表示します",
-    )
-    @app_commands.describe(text="品詞を確認したい文字列")
-    async def sudachi_pos(self, interaction: discord.Interaction, text: str):
-        embed_helper = EmbedHelper(function_name="Admin Sudachi POS")
-
-        if ADMIN_USER_ID is None:
-            embed = embed_helper.create_error_embed(
-                title="設定エラー",
-                description="config.py に ADMIN_USER_ID が設定されていません。",
-            )
-            await interaction.response.send_message(embed=embed, ephemeral=True)
-            return
-
-        if not self._is_admin_user(interaction.user.id):
-            embed = embed_helper.create_error_embed(
-                title="権限エラー",
-                description="このコマンドは管理者のみ実行できます。",
-            )
-            await interaction.response.send_message(embed=embed, ephemeral=True)
-            return
-
-        await interaction.response.defer(ephemeral=True, thinking=True)
-
-        try:
-            result = await asyncio.to_thread(inspect_tokens_with_pos, text)
-        except Exception as error:
-            embed = embed_helper.create_error_embed(
-                title="解析エラー",
-                description="SudachiPy の解析中にエラーが発生しました。ログを確認してください。",
-            )
-            await interaction.followup.send(embed=embed, ephemeral=True)
-            print(f"[Admin] sudachi_pos failed: {error}")
-            return
-
-        embed = embed_helper.create_info_embed(
-            title="Sudachi POS Debug",
-            description=self._format_sudachi_pos_description(result),
-        )
-        await interaction.followup.send(embed=embed, ephemeral=True)
 
     @reset_group.command(
         name="leran",

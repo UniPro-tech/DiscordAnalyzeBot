@@ -3,7 +3,6 @@ from libs.text_processing import (
     clear_extract_tokens_cache,
     extract_tokens,
     extract_tokens_with_indices,
-    inspect_tokens_with_pos,
     normalize_text,
 )
 
@@ -62,38 +61,6 @@ def test_extract_tokens_drops_taiku_noise_word():
 
 def test_extract_tokens_with_indices_keeps_original_positions():
     assert extract_tokens_with_indices("記憶の人間") == [("記憶", 0), ("人間", 2)]
-
-
-def test_inspect_tokens_with_pos_returns_pos_and_target_flags(monkeypatch):
-    import libs.text_processing as text_processing
-
-    class tokenizer_stub:
-        def tokenize(self, _text, _mode):
-            return [
-                _TokenStub("参加者", ("名詞", "一般", "*")),
-                _TokenStub("つ", ("接尾辞", "名詞的", "助数詞")),
-            ]
-
-    monkeypatch.setattr(text_processing, "tokenizer_obj", tokenizer_stub())
-
-    result = inspect_tokens_with_pos("参加者つ")
-
-    assert result["normalized_text"] == "参加者つ"
-    assert result["extracted_tokens"] == ["参加者"]
-    assert result["tokens"] == [
-        {
-            "index": 0,
-            "surface": "参加者",
-            "pos": ("名詞", "一般", "*"),
-            "is_target": True,
-        },
-        {
-            "index": 1,
-            "surface": "つ",
-            "pos": ("接尾辞", "名詞的", "助数詞"),
-            "is_target": False,
-        },
-    ]
 
 
 class _TokenStub:
