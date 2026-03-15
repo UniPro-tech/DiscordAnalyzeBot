@@ -156,101 +156,6 @@ def test_migrate_message_tokens_updates_null_tokens_for_clickhouse(monkeypatch):
     assert db.rows[2]["tokens"] == ["ok"]
 
 
-def test_migrate_message_tokens_force_updates_all_non_empty_for_clickhouse(monkeypatch):
-    class _DB:
-        backend = "clickhouse"
-
-        def __init__(self):
-            self.rows = [
-                {"message_id": "1", "content": "ミラノ風ドリア", "tokens": ["old"]},
-                {"message_id": "2", "content": "", "tokens": ["old"]},
-                {"message_id": "3", "content": "再生成対象", "tokens": []},
-            ]
-
-        def query_dicts(self, _query, parameters=None):
-            limit = int((parameters or {}).get("limit", 0)) or len(self.rows)
-            docs = [
-                {"message_id": row["message_id"], "content": row["content"]}
-                for row in self.rows
-                if (row.get("content") or "").strip()
-            ]
-            return docs[:limit]
-
-        def command(self, _query, parameters=None):
-            parameters = parameters or {}
-            for row in self.rows:
-                if row.get("message_id") == parameters.get("message_id"):
-                    row["tokens"] = parameters.get("tokens")
-
-    import libs.wordcloud_service as wc
-
-    monkeypatch.setattr(wc, "extract_tokens", lambda _text: ["tok"])
-    monkeypatch.setattr(wc, "normalize_text", lambda text: text)
-
-    db = _DB()
-
-    updated = migrate_message_tokens(db, batch_size=10, force=True)
-
-    assert updated == 2
-    assert db.rows[0]["tokens"] == ["tok"]
-    assert db.rows[1]["tokens"] == ["old"]
-    assert db.rows[2]["tokens"] == ["tok"]
-
-
-def test_migrate_message_tokens_updates_null_tokens_for_mongo(monkeypatch):
-    class _FindResult(list):
-        def limit(self, size):
-            return _FindResult(self[:size])
-
-    class _MessagesCollection:
-        def __init__(self):
-            self.docs = [
-                {"_id": 1, "content": "ミラノ風ドリア", "tokens": None},
-                {"_id": 2, "content": "", "tokens": None},
-                {"_id": 3, "content": "既存", "tokens": ["ok"]},
-            ]
-
-        def find(self, query, projection):
-            docs = []
-            for doc in self.docs:
-                tokens_missing = "tokens" not in doc
-                tokens_null = doc.get("tokens") is None
-                if not (tokens_missing or tokens_null):
-                    continue
-                if not (doc.get("content") or ""):
-                    continue
-                docs.append({key: doc[key] for key in projection if key in doc})
-            return _FindResult(docs)
-
-        def bulk_write(self, operations, ordered=False):
-            assert ordered is False
-            for operation in operations:
-                target_id = operation._filter["_id"]
-                for doc in self.docs:
-                    if doc["_id"] == target_id:
-                        doc["tokens"] = operation._doc["$set"]["tokens"]
-
-    class _DB:
-        backend = "mongo"
-
-        def __init__(self):
-            self.messages = _MessagesCollection()
-
-    import libs.wordcloud_service as wc
-
-    monkeypatch.setattr(wc, "extract_tokens", lambda _text: ["tok"])
-    monkeypatch.setattr(wc, "normalize_text", lambda text: text)
-
-    db = _DB()
-
-    updated = migrate_message_tokens(db, batch_size=10)
-
-    assert updated == 1
-    assert db.messages.docs[0]["tokens"] == ["tok"]
-    assert db.messages.docs[1]["tokens"] is None
-    assert db.messages.docs[2]["tokens"] == ["ok"]
-
-
 def test_build_learning_cursor_query_returns_empty_without_cursor():
     assert build_learning_cursor_query(None) == {}
 
@@ -469,7 +374,6 @@ class _ClickHouseLearningStub:
     def __init__(self):
         self.backend = "clickhouse"
         self.tables = {
-            "messages": [],
             "unigrams": [],
             "ngrams": [],
             "compounds": [],
@@ -488,18 +392,11 @@ class _ClickHouseLearningStub:
         if normalized_query.startswith("TRUNCATE TABLE IF EXISTS"):
             table_name = query.strip().split()[-1]
             self.tables[table_name] = []
-            return
-
-        if normalized_query.startswith("ALTER TABLE MESSAGES UPDATE TOKENS = []"):
-            for row in self.tables["messages"]:
-                row["tokens"] = []
 
     def query_scalar(self, query, parameters=None):
         normalized = " ".join(query.split()).upper()
         if "SELECT SUM(COUNT) AS TOTAL FROM UNIGRAMS" in normalized:
             return sum(int(doc.get("count", 0)) for doc in self.tables["unigrams"])
-        if "SELECT COUNT() AS COUNT FROM MESSAGES" in normalized:
-            return len(self.tables["messages"])
         return None
 
     def query_dicts(self, query, parameters=None):
@@ -579,7 +476,6 @@ def test_update_compounds_for_clickhouse_inserts_compound_rows():
 
 def test_reset_learning_state_for_clickhouse_truncates_learning_tables():
     db = _ClickHouseLearningStub()
-    db.insert_rows("messages", [["1", "g", "guild", "u", "name", "c", "", "chan", "text", "2026-03-16 00:00:00.000", [], None, [], [], 4, 0, 0, ["tok"]]], ["message_id", "guild_id", "guild_name", "user_id", "username", "channel_id", "parent_channel_id", "channel_name", "content", "timestamp", "role_ids", "reply_to", "mentions", "attachments", "length", "emoji_count", "url_count", "tokens"])
     db.insert_rows("unigrams", [["a", 1]], ["word", "count"])
     db.insert_rows("ngrams", [[["a", "b"], 1]], ["ngram", "count"])
     db.insert_rows("compounds", [["ab", 3.1]], ["word", "pmi"])
@@ -589,49 +485,3 @@ def test_reset_learning_state_for_clickhouse_truncates_learning_tables():
     assert db.tables["unigrams"] == []
     assert db.tables["ngrams"] == []
     assert db.tables["compounds"] == []
-    assert db.tables["messages"][0]["tokens"] == []
-
-
-def test_reset_learning_state_for_mongo_sets_tokens_to_null():
-    class _Collection:
-        def __init__(self, docs=None):
-            self.docs = docs or []
-            self.deleted = False
-
-        def delete_many(self, _query):
-            self.deleted = True
-
-        def update_many(self, _query, update):
-            for doc in self.docs:
-                doc["tokens"] = update["$set"]["tokens"]
-
-            class _Result:
-                modified_count = len(self.docs)
-
-            return _Result()
-
-        def delete_one(self, _query):
-            return None
-
-    class _DB:
-        backend = "mongo"
-
-        def __init__(self):
-            self.messages = _Collection([
-                {"_id": 1, "tokens": ["tok"]},
-                {"_id": 2},
-            ])
-            self.unigrams = _Collection()
-            self.ngrams = _Collection()
-            self.compounds = _Collection()
-            self.meta = _Collection()
-
-    db = _DB()
-
-    reset_learning_state(db)
-
-    assert db.unigrams.deleted is True
-    assert db.ngrams.deleted is True
-    assert db.compounds.deleted is True
-    assert db.messages.docs[0]["tokens"] is None
-    assert db.messages.docs[1]["tokens"] is None
