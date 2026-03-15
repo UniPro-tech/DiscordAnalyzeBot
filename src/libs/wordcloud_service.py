@@ -727,10 +727,10 @@ def update_last_learn_id(db, last_id) -> None:
 
 def reset_learning_state(db) -> None:
     if _is_clickhouse(db):
-        db = _learning_db(db)
-        db.command("TRUNCATE TABLE IF EXISTS unigrams")
-        db.command("TRUNCATE TABLE IF EXISTS ngrams")
-        db.command("TRUNCATE TABLE IF EXISTS compounds")
+        learning_db = _learning_db(db)
+        learning_db.command("TRUNCATE TABLE IF EXISTS unigrams")
+        learning_db.command("TRUNCATE TABLE IF EXISTS ngrams")
+        learning_db.command("TRUNCATE TABLE IF EXISTS compounds")
     else:
         db.unigrams.delete_many({})
         db.ngrams.delete_many({})
