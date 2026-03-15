@@ -1,6 +1,5 @@
 import os
 from itertools import islice
-from datetime import datetime, timezone
 
 from pymongo import MongoClient
 
@@ -113,23 +112,6 @@ def target_has_existing_data(target_db, table_names: tuple[str, ...] | None = No
 
 
 def _message_row(doc: dict) -> list:
-    # Normalize timestamp to ClickHouse-friendly millisecond precision string
-    ts = doc.get("timestamp")
-    ts_str = None
-    if isinstance(ts, datetime):
-        if ts.tzinfo is None:
-            ts = ts.replace(tzinfo=timezone.utc)
-        ts_utc = ts.astimezone(timezone.utc)
-        ts_str = ts_utc.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
-    elif isinstance(ts, str):
-        try:
-            parsed = datetime.fromisoformat(ts)
-            if parsed.tzinfo is None:
-                parsed = parsed.replace(tzinfo=timezone.utc)
-            ts_str = parsed.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
-        except Exception:
-            ts_str = None
-
     return [
         str(doc.get("message_id", "")),
         str(doc.get("guild_id", "")),
@@ -139,7 +121,7 @@ def _message_row(doc: dict) -> list:
         str(doc.get("channel_id", "")),
         str(doc.get("channel_name", "")),
         str(doc.get("content", "")),
-        ts_str,
+        doc.get("timestamp"),
         [str(value) for value in doc.get("role_ids", [])],
         str(doc.get("reply_to")) if doc.get("reply_to") is not None else None,
         [str(value) for value in doc.get("mentions", [])],
