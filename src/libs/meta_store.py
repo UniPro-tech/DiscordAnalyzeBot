@@ -2,17 +2,7 @@ import json
 
 
 def _is_clickhouse(db) -> bool:
-    # Support both storage wrapper objects (which expose `backend`) and
-    # raw ClickHouse client objects (which expose ClickHouse methods).
-    backend = getattr(db, "backend", None)
-    if backend == "clickhouse":
-        return True
-
-    # Detect raw ClickHouse client by presence of query/insert methods
-    if hasattr(db, "query_dicts") or hasattr(db, "query_scalar") or hasattr(db, "insert_rows"):
-        return True
-
-    return False
+    return getattr(db, "backend", "mongo") == "clickhouse"
 
 
 def _resolve_meta_db(db):

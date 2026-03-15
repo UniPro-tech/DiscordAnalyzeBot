@@ -795,22 +795,11 @@ def count_unmigrated_tokens(db) -> int:
     """トークン未生成（tokens フィールドが存在しない）メッセージ件数を返す。
     ClickHouse 環境では常に 0 を返す（マイグレーション不要）。
     """
-    # Mongo の場合は count_documents を使う
-    if not _is_clickhouse(db):
-        query = {"tokens": {"$exists": False}, "content": {"$type": "string", "$ne": ""}}
-        return int(db.messages.count_documents(query))
+    if _is_clickhouse(db):
+        return 0
 
-    # ClickHouse / hybrid 環境では SQL を発行して未生成のメッセージを数える
-    msg_db = db
-    if getattr(db, "backend", "mongo") == "hybrid":
-        msg_db = db.db_clickhouse
-
-    sql = (
-        "SELECT count() AS count FROM messages "
-        "WHERE (tokens IS NULL OR NOT arrayExists(x -> x != '', tokens)) "
-        "AND content != ''"
-    )
-    return int(msg_db.query_scalar(sql) or 0)
+    query = {"tokens": {"$exists": False}, "content": {"$type": "string", "$ne": ""}}
+    return int(db.messages.count_documents(query))
 
 
 def _update_compounds_clickhouse(db) -> None:
