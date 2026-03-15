@@ -153,9 +153,7 @@ def _projection_columns(projection: dict) -> list[str]:
     return columns
 
 
-def is_channel_opted_out(db, guild_id: str, channel_id: str) -> bool:
-    settings_db = _settings_db(db)
-
+def _fetch_channel_opt_out(settings_db, guild_id: str, channel_id: str) -> bool:
     if _is_clickhouse(settings_db):
         rows = settings_db.query_dicts(
             """
@@ -177,11 +175,27 @@ def is_channel_opted_out(db, guild_id: str, channel_id: str) -> bool:
     channel_opt_out = settings_db.channel_settings.find_one(
         {"guild_id": guild_id, "channel_id": channel_id}
     )
-
     if channel_opt_out is None:
         return False
-
     return channel_opt_out.get("opt_out", False)
+
+
+def is_channel_opted_out(
+    db,
+    guild_id: str,
+    channel_id: str,
+    parent_channel_id: str | None = None,
+) -> bool:
+    """Check opt-out for a channel or its parent (e.g., forum)."""
+    settings_db = _settings_db(db)
+    channel_candidates = [channel_id]
+    if parent_channel_id is not None:
+        channel_candidates.append(parent_channel_id)
+
+    for candidate in channel_candidates:
+        if _fetch_channel_opt_out(settings_db, guild_id, candidate):
+            return True
+    return False
 
 
 def is_user_opted_out(db, user_id: str) -> bool:
@@ -215,10 +229,11 @@ def get_opt_out_flags(
     guild_id: str,
     channel_id: str,
     user_id: str,
+    parent_channel_id: str | None = None,
 ) -> tuple[bool, bool]:
     """オプトアウトフラグをまとめて取得するユーティリティ関数。DBアクセスが伴うため、必要に応じて非同期で呼び出すこと。"""
     return (
-        is_channel_opted_out(db, guild_id, channel_id),
+        is_channel_opted_out(db, guild_id, channel_id, parent_channel_id),
         is_user_opted_out(db, user_id),
     )
 
@@ -240,6 +255,7 @@ def setup_message_indexes(db) -> None:
                 user_id String,
                 username String,
                 channel_id String,
+                    parent_channel_id String,
                 channel_name String,
                 content String,
                 timestamp DateTime64(3, 'UTC'),
@@ -257,10 +273,17 @@ def setup_message_indexes(db) -> None:
             TTL toDateTime(timestamp) + INTERVAL 30 DAY
             """
         )
+        db.command(
+            """
+            ALTER TABLE messages
+            ADD COLUMN IF NOT EXISTS parent_channel_id String DEFAULT ''
+            """
+        )
         return
 
     db.messages.create_index("user_id")
     db.messages.create_index("channel_id")
+    db.messages.create_index("parent_channel_id")
     db.messages.create_index("guild_id")
     db.messages.create_index(
         "message_id",
@@ -388,6 +411,7 @@ def insert_message(db, message: dict) -> None:
         else:
             ts_str = None
 
+        parent_channel_id = message.get("parent_channel_id")
         row = [
             str(message.get("message_id", "")),
             str(message.get("guild_id", "")),
@@ -395,6 +419,7 @@ def insert_message(db, message: dict) -> None:
             str(message.get("user_id", "")),
             str(message.get("username", "")),
             str(message.get("channel_id", "")),
+            str(parent_channel_id) if parent_channel_id is not None else "",
             str(message.get("channel_name", "")),
             str(message.get("content", "")),
             ts_str,
@@ -417,6 +442,7 @@ def insert_message(db, message: dict) -> None:
                 "user_id",
                 "username",
                 "channel_id",
+                "parent_channel_id",
                 "channel_name",
                 "content",
                 "timestamp",

@@ -111,10 +111,19 @@ async def on_message(message):
 
     guild_id = str(message.guild.id)
     channel_id = str(message.channel.id)
+    parent_channel_id = None
+    if isinstance(message.channel, discord.Thread) and message.channel.parent is not None:
+        parent_channel_id = str(message.channel.parent.id)
     user_id = str(message.author.id)
 
     def collect_opt_out_flags() -> tuple[bool, bool]:
-        return get_opt_out_flags(bot.db, guild_id, channel_id, user_id)
+        return get_opt_out_flags(
+            bot.db,
+            guild_id,
+            channel_id,
+            user_id,
+            parent_channel_id,
+        )
 
     channel_opted_out, user_opted_out = await asyncio.to_thread(collect_opt_out_flags)
 
@@ -140,6 +149,7 @@ async def on_message(message):
         "user_id": user_id,
         "username": str(message.author),
         "channel_id": channel_id,
+        "parent_channel_id": parent_channel_id,
         "channel_name": str(message.channel),
         "content": message.content,
         "timestamp": message.created_at.isoformat(),
