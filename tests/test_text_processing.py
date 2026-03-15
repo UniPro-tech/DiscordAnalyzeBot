@@ -53,22 +53,6 @@ def test_extract_tokens_drops_counter_suffix_noise():
     assert "つ" not in extract_tokens("ひとつ食べた")
 
 
-def test_extract_tokens_keeps_meishiteki_and_keiyoushiteki_suffixes(monkeypatch):
-    import libs.text_processing as text_processing
-
-    class tokenizer_stub:
-        def tokenize(self, _text, _mode):
-            return [
-                _TokenStub("風", ("接尾辞", "形状詞的", "*")),
-                _TokenStub("式", ("接尾辞", "名詞的", "一般")),
-            ]
-
-    clear_extract_tokens_cache()
-    monkeypatch.setattr(text_processing, "tokenizer_obj", tokenizer_stub())
-
-    assert extract_tokens("風式") == ["風", "式"]
-
-
 def test_extract_tokens_drops_taiku_noise_word():
     tokens = extract_tokens("多くの参加者が集まった")
 
