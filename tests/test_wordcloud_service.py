@@ -3,6 +3,7 @@ from zoneinfo import ZoneInfo
 
 from libs.wordcloud_service import (
     build_during_since_timestamp,
+    clear_all_message_tokens,
     get_schedule_during_days,
     learn_from_text,
     learn_from_texts,
@@ -166,6 +167,26 @@ class _BatchLearnDBStub:
         self.ngrams = _BulkCollectionStub()
 
 
+class _UpdateManyResultStub:
+    def __init__(self, modified_count: int):
+        self.modified_count = modified_count
+
+
+class _MessagesCollectionForTokenResetStub:
+    def __init__(self, modified_count: int):
+        self.modified_count = modified_count
+        self.calls = []
+
+    def update_many(self, query, update):
+        self.calls.append((query, update))
+        return _UpdateManyResultStub(self.modified_count)
+
+
+class _TokenResetDBStub:
+    def __init__(self, modified_count: int):
+        self.messages = _MessagesCollectionForTokenResetStub(modified_count)
+
+
 def test_learn_from_text_does_not_create_ngram_across_particle():
     db = _DBStub()
 
@@ -239,3 +260,12 @@ def test_learn_from_texts_uses_bulk_write_and_aggregates_counts():
     assert unigram_counts["経済"] == 2
     assert unigram_counts["社会"] == 2
     assert unigram_counts["問題"] == 2
+
+
+def test_clear_all_message_tokens_unsets_tokens_field_and_returns_count():
+    db = _TokenResetDBStub(modified_count=123)
+
+    modified_count = clear_all_message_tokens(db)
+
+    assert modified_count == 123
+    assert db.messages.calls == [({}, {"$unset": {"tokens": ""}})]

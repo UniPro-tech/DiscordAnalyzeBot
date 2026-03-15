@@ -536,6 +536,11 @@ def reset_learning_state(db) -> None:
     clear_extract_tokens_cache()
 
 
+def clear_all_message_tokens(db) -> int:
+    result = db.messages.update_many({}, {"$unset": {"tokens": ""}})
+    return result.modified_count
+
+
 def get_frequency_label(frequency: str) -> str:
     return {
         "daily": "デイリー",

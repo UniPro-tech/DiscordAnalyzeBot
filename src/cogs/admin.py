@@ -8,8 +8,10 @@ from config import ADMIN_USER_ID
 from libs.embed import EmbedHelper
 from libs.text_processing import analyze_sudachi_pos
 from libs.wordcloud_service import (
+    clear_all_message_tokens,
     fetch_learning_documents,
     learn_from_texts,
+    migrate_message_tokens,
     reset_learning_state,
     update_compounds,
     update_last_learn_id,
@@ -34,8 +36,10 @@ class Admin(commands.Cog):
     def _is_admin_user(self, user_id: int) -> bool:
         return ADMIN_USER_ID is not None and user_id == ADMIN_USER_ID
 
-    def _reset_and_relearn_sync(self) -> int:
+    def _reset_and_relearn_sync(self) -> tuple[int, int, int]:
         reset_learning_state(self.bot.db)
+        cleared_token_count = clear_all_message_tokens(self.bot.db)
+        recalculated_token_count = migrate_message_tokens(self.bot.db)
         last_id = None
         learned_message_count = 0
 
@@ -53,14 +57,14 @@ class Admin(commands.Cog):
             update_last_learn_id(self.bot.db, last_id)
 
         update_compounds(self.bot.db)
-        return learned_message_count
+        return learned_message_count, cleared_token_count, recalculated_token_count
 
     @reset_group.command(
-        name="leran",
+        name="learn",
         description="学習データをリセットして全メッセージを再学習します",
     )
-    async def reset_leran(self, interaction: discord.Interaction):
-        embed_helper = EmbedHelper(function_name="Admin Reset Leran")
+    async def reset_learn(self, interaction: discord.Interaction):
+        embed_helper = EmbedHelper(function_name="Admin Reset learn")
 
         if ADMIN_USER_ID is None:
             embed = embed_helper.create_error_embed(
@@ -90,21 +94,27 @@ class Admin(commands.Cog):
 
         async with self._relearn_lock:
             try:
-                learned_message_count = await asyncio.to_thread(self._reset_and_relearn_sync)
+                (
+                    learned_message_count,
+                    cleared_token_count,
+                    recalculated_token_count,
+                ) = await asyncio.to_thread(self._reset_and_relearn_sync)
             except Exception as error:
                 embed = embed_helper.create_error_embed(
                     title="再学習エラー",
                     description="再学習中にエラーが発生しました。ログを確認してください。",
                 )
                 await interaction.followup.send(embed=embed, ephemeral=True)
-                print(f"[Admin] Reset leran command failed: {error}")
+                print(f"[Admin] Reset learn command failed: {error}")
                 return
 
         embed = embed_helper.create_success_embed(
             title="再学習完了",
             description=(
                 "学習データ（unigrams / ngrams / compounds / last_learn_id）をリセットして、"
-                f"{learned_message_count}件のメッセージを再学習しました。"
+                f"{learned_message_count}件のメッセージを再学習しました。\n"
+                f"tokensを初期化したメッセージ: {cleared_token_count}件\n"
+                f"tokensを再計算したメッセージ: {recalculated_token_count}件"
             ),
         )
         await interaction.followup.send(embed=embed, ephemeral=True)
