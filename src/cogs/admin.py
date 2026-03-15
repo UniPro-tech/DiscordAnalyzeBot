@@ -162,7 +162,8 @@ class Admin(commands.Cog):
         embed = embed_helper.create_success_embed(
             title="マイグレーション状況",
             description=(
-                f"tokens 未生成メッセージ数: {remaining}"
+                f"tokens 未生成メッセージ数: {remaining}\n"
+                "※ClickHouse 環境では常に 0 を返します。"
             ),
         )
         await interaction.followup.send(embed=embed, ephemeral=True)
