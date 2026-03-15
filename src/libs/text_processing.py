@@ -2,6 +2,7 @@ import math
 import re
 import unicodedata
 from functools import lru_cache
+from typing import TypedDict
 
 from sudachipy import dictionary, tokenizer
 
@@ -60,6 +61,19 @@ STRIKETHROUGH_PATTERN = re.compile(r"~~.*?~~")
 SPOILER_PATTERN = re.compile(r"\|\|.*?\|\|")
 WWW_PATTERN = re.compile(r"[wｗ]{2,}")
 MULTISPACE_PATTERN = re.compile(r"\s+")
+
+
+class TokenDebugEntry(TypedDict):
+    index: int
+    surface: str
+    pos: tuple[str, ...]
+    is_target: bool
+
+
+class TokenDebugResult(TypedDict):
+    normalized_text: str
+    tokens: list[TokenDebugEntry]
+    extracted_tokens: list[str]
 
 
 def normalize_text(text: str) -> str:
@@ -135,6 +149,36 @@ def extract_tokens_with_indices(text: str) -> list[tuple[str, int]]:
             words_with_indices.append((word, index))
 
     return words_with_indices
+
+
+def inspect_tokens_with_pos(text: str) -> TokenDebugResult:
+    normalized_text = normalize_text(text)
+    tokens = tokenizer_obj.tokenize(normalized_text, MODE)
+    debug_tokens: list[TokenDebugEntry] = []
+    extracted_tokens: list[str] = []
+
+    for index, token in enumerate(tokens):
+        pos = tuple(token.part_of_speech())
+        surface = token.surface()
+        is_target = _is_target_token(surface, pos)
+
+        debug_tokens.append(
+            {
+                "index": index,
+                "surface": surface,
+                "pos": pos,
+                "is_target": is_target,
+            }
+        )
+
+        if is_target:
+            extracted_tokens.append(surface)
+
+    return {
+        "normalized_text": normalized_text,
+        "tokens": debug_tokens,
+        "extracted_tokens": extracted_tokens,
+    }
 
 
 def generate_ngrams(tokens: list[str], n: int) -> list[tuple[str, ...]]:
