@@ -98,6 +98,9 @@ def _is_target_token(word: str, pos: tuple[str, ...]) -> bool:
         return False
 
     if pos[0] == "接尾辞":
+        if len(pos) < 2 or pos[1] not in {"形状詞的", "名詞的"}:
+            return False
+
         # Exclude counters like "つ" (接尾辞-名詞的-助数詞)
         if len(pos) > 2 and pos[2] == "助数詞":
             return False
