@@ -42,6 +42,32 @@ def get_opt_out_flags(
     )
 
 
+def get_guild_collection_stats(db) -> list[dict[str, int | str]]:
+    pipeline = [
+        {
+            "$group": {
+                "_id": {
+                    "guild_id": "$guild_id",
+                    "guild_name": {"$ifNull": ["$guild_name", "Unknown Guild"]},
+                },
+                "message_count": {"$sum": 1},
+                "user_ids": {"$addToSet": "$user_id"},
+            }
+        },
+        {
+            "$project": {
+                "_id": 0,
+                "guild_id": "$_id.guild_id",
+                "guild_name": "$_id.guild_name",
+                "message_count": 1,
+                "collected_user_count": {"$size": "$user_ids"},
+            }
+        },
+        {"$sort": {"message_count": -1}},
+    ]
+    return list(db.messages.aggregate(pipeline))
+
+
 def normalize_message_ids(message_ids) -> list[str]:
     return [str(message_id) for message_id in message_ids]
 

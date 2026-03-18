@@ -1,4 +1,8 @@
-from libs.message_store import get_opt_out_flags, is_channel_opted_out
+from libs.message_store import (
+    get_guild_collection_stats,
+    get_opt_out_flags,
+    is_channel_opted_out,
+)
 
 
 class _CollectionStub:
@@ -29,10 +33,25 @@ class _CollectionStub:
         return None
 
 
+class _AggregateCollectionStub:
+    def __init__(self, result_docs):
+        self.result_docs = result_docs
+        self.last_pipeline = None
+
+    def aggregate(self, pipeline):
+        self.last_pipeline = pipeline
+        return iter(self.result_docs)
+
+
 class _DBStub:
     def __init__(self, channel_docs, user_docs):
         self.channel_settings = _CollectionStub(channel_docs)
         self.user_settings = _CollectionStub(user_docs)
+
+
+class _StatsDBStub:
+    def __init__(self, aggregate_docs):
+        self.messages = _AggregateCollectionStub(aggregate_docs)
 
 
 def test_is_channel_opted_out_matches_channel_id():
@@ -66,3 +85,41 @@ def test_get_opt_out_flags_checks_channel_and_user_with_parent_channel():
         user_id="u1",
         parent_channel_id="forum1",
     ) == (True, True)
+
+
+def test_get_guild_collection_stats_uses_aggregation_pipeline():
+    db = _StatsDBStub(
+        aggregate_docs=[
+            {
+                "guild_id": "g2",
+                "guild_name": "Guild 2",
+                "message_count": 5,
+                "collected_user_count": 3,
+            },
+            {
+                "guild_id": "g1",
+                "guild_name": "Guild 1",
+                "message_count": 3,
+                "collected_user_count": 2,
+            },
+        ]
+    )
+
+    stats = get_guild_collection_stats(db)
+
+    assert stats == [
+        {
+            "guild_id": "g2",
+            "guild_name": "Guild 2",
+            "message_count": 5,
+            "collected_user_count": 3,
+        },
+        {
+            "guild_id": "g1",
+            "guild_name": "Guild 1",
+            "message_count": 3,
+            "collected_user_count": 2,
+        },
+    ]
+    assert db.messages.last_pipeline is not None
+    assert db.messages.last_pipeline[-1] == {"$sort": {"message_count": -1}}
