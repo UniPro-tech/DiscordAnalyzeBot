@@ -47,7 +47,8 @@ STOP_WORDS = {
     "多く",
     "お疲れ様",
     "うち",
-    "はず"
+    "はず",
+    "ごめん"
 }
 
 tokenizer_obj = dictionary.Dictionary().create()
@@ -113,7 +114,7 @@ def _is_target_token(word: str, pos: tuple[str, ...]) -> bool:
 
         return len(word) >= 1
 
-    if pos[0] == "名詞" and pos[1] != "数":
+    if pos[0] == "名詞" and pos[1] != "数" and pos[2] != "副詞可能":
         return len(word) >= 2
 
     return False
