@@ -1,3 +1,6 @@
+import pymongo
+
+
 def is_channel_opted_out(
     db,
     guild_id: str,
@@ -42,25 +45,22 @@ def get_opt_out_flags(
     )
 
 
-def get_guild_collection_stats(db) -> list[dict[str, int | str]]:
+def get_guild_collection_stats(db: pymongo.MongoClient) -> list[dict[str, int | str]]:
     pipeline = [
+        {"$group": {"_id": {"guild_id": "$guild_id", "user_id": "$user_id"}}},
         {
             "$group": {
-                "_id": {
-                    "guild_id": "$guild_id",
-                    "guild_name": {"$ifNull": ["$guild_name", "Unknown Guild"]},
-                },
+                "_id": "$_id.guild_id",
                 "message_count": {"$sum": 1},
-                "user_ids": {"$addToSet": "$user_id"},
+                "collected_user_count": {"$sum": 1},
             }
         },
         {
             "$project": {
-                "_id": 0,
-                "guild_id": "$_id.guild_id",
-                "guild_name": "$_id.guild_name",
+                "guild_id": "$_id",
                 "message_count": 1,
-                "collected_user_count": {"$size": "$user_ids"},
+                "collected_user_count": 1,
+                "_id": 0,
             }
         },
         {"$sort": {"message_count": -1}},
@@ -85,8 +85,12 @@ def delete_messages_by_query(db, query: dict) -> int:
 
 def delete_guild_data(db, guild_id: str) -> dict[str, int]:
     deleted_messages = db.messages.delete_many({"guild_id": guild_id}).deleted_count
-    deleted_schedules = db.guild_settings.delete_many({"guild_id": guild_id}).deleted_count
-    deleted_channel_settings = db.channel_settings.delete_many({"guild_id": guild_id}).deleted_count
+    deleted_schedules = db.guild_settings.delete_many(
+        {"guild_id": guild_id}
+    ).deleted_count
+    deleted_channel_settings = db.channel_settings.delete_many(
+        {"guild_id": guild_id}
+    ).deleted_count
 
     return {
         "messages": deleted_messages,
