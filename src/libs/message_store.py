@@ -47,20 +47,11 @@ def get_opt_out_flags(
 
 def get_guild_collection_stats(db: pymongo.MongoClient) -> list[dict[str, int | str]]:
     pipeline = [
-        {"$group": {"_id": {"guild_id": "$guild_id", "user_id": "$user_id"}}},
         {
             "$group": {
-                "_id": "$_id.guild_id",
+                "_id": "$guild_id",
                 "message_count": {"$sum": 1},
-                "collected_user_count": {"$sum": 1},
-            }
-        },
-        {
-            "$project": {
-                "guild_id": "$_id",
-                "message_count": 1,
-                "collected_user_count": 1,
-                "_id": 0,
+                "last_message_time": {"$max": "$timestamp"},
             }
         },
         {"$sort": {"message_count": -1}},
