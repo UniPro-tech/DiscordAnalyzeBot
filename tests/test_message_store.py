@@ -95,12 +95,14 @@ def test_get_guild_collection_stats_uses_aggregation_pipeline():
                 "guild_name": "Guild 2",
                 "message_count": 5,
                 "collected_user_count": 3,
+                "last_message_time": "2026-01-02T00:00:00+00:00",
             },
             {
                 "guild_id": "g1",
                 "guild_name": "Guild 1",
                 "message_count": 3,
                 "collected_user_count": 2,
+                "last_message_time": "2026-01-01T00:00:00+00:00",
             },
         ]
     )
@@ -113,13 +115,25 @@ def test_get_guild_collection_stats_uses_aggregation_pipeline():
             "guild_name": "Guild 2",
             "message_count": 5,
             "collected_user_count": 3,
+            "last_message_time": "2026-01-02T00:00:00+00:00",
         },
         {
             "guild_id": "g1",
             "guild_name": "Guild 1",
             "message_count": 3,
             "collected_user_count": 2,
+            "last_message_time": "2026-01-01T00:00:00+00:00",
         },
     ]
     assert db.messages.last_pipeline is not None
+    assert db.messages.last_pipeline[1] == {
+        "$project": {
+            "_id": 0,
+            "guild_id": "$_id",
+            "guild_name": 1,
+            "message_count": 1,
+            "collected_user_count": {"$size": "$collected_user_ids"},
+            "last_message_time": 1,
+        }
+    }
     assert db.messages.last_pipeline[-1] == {"$sort": {"message_count": -1}}
