@@ -40,8 +40,12 @@ def test_build_during_since_timestamp_uses_jst_day_boundary(monkeypatch):
         lambda: datetime(2026, 3, 13, 10, 45, tzinfo=timezone.utc),
     )
 
-    assert build_during_since_timestamp(1) == "2026-03-12T15:00:00+00:00"
-    assert build_during_since_timestamp(2) == "2026-03-11T15:00:00+00:00"
+    assert build_during_since_timestamp(1) == datetime(
+        2026, 3, 12, 15, 0, tzinfo=timezone.utc
+    )
+    assert build_during_since_timestamp(2) == datetime(
+        2026, 3, 11, 15, 0, tzinfo=timezone.utc
+    )
 
 
 def test_get_schedule_during_days_matches_frequency():

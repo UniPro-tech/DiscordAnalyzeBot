@@ -53,7 +53,14 @@ def setup_db():
     bot.db.messages.create_index("reply_to")
 
     # TTL Index: 30日後に自動的に削除
+    # timestampフィールド（datetime型）に対してTTLが機能
     bot.db.messages.create_index("timestamp", expireAfterSeconds=30 * 24 * 60 * 60)
+    
+    # 互換性フィールド用インデックス（既存のISO文字列形式）
+    bot.db.messages.create_index("timestamp_iso")
+    
+    # サーバーごとのメッセージ取得を速くする複合インデックス
+    bot.db.messages.create_index([("guild_id", 1), ("timestamp", -1)])
 
     # Guild設定のインデックス設定
     bot.db.guild_settings.create_index(
@@ -170,7 +177,10 @@ async def on_message(message):
         "parent_channel_id": parent_channel_id,
         "channel_name": str(message.channel),
         "content": message.content,
-        "timestamp": message.created_at.isoformat(),
+        # MongoDB TTLインデックスはdatetime型フィールドで動作します
+        "timestamp": message.created_at,
+        # 互換性維持用: 既存データのISO文字列形式もサポート
+        "timestamp_iso": message.created_at.isoformat(),
         "role_ids": [str(role.id) for role in roles] if roles else [],
         "reply_to": reply_to,
         "mentions": [str(user.id) for user in message.mentions],

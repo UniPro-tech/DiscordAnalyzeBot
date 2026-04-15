@@ -46,7 +46,7 @@ def parse_period_days(period: Optional[str]) -> int | None:
     return parse_during_days(period)
 
 
-def build_during_since_timestamp(during_days: int, *, tz=JST) -> str:
+def build_during_since_timestamp(during_days: int, *, tz=JST) -> datetime:
     if during_days <= 0:
         raise ValueError("during must be positive")
 
@@ -54,7 +54,7 @@ def build_during_since_timestamp(during_days: int, *, tz=JST) -> str:
     since_local = now_local.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(
         days=during_days - 1
     )
-    return since_local.astimezone(timezone.utc).isoformat()
+    return since_local.astimezone(timezone.utc)
 
 
 def build_wordcloud_message_query(
