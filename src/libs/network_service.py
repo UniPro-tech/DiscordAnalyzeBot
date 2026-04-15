@@ -3,15 +3,13 @@ import io
 import math
 from typing import Callable
 import unicodedata
+from datetime import datetime
 
 from libs.visualization_common import resolve_font_path
 
 import matplotlib.font_manager as fm
 import matplotlib.pyplot as plt
 import networkx as nx
-
-from libs.wordcloud_service import build_during_since_timestamp
-
 
 DEFAULT_MESSAGE_LIMIT = 5000
 CANVAS_WIDTH_PX = 3200
@@ -22,16 +20,22 @@ CANVAS_DPI = 100
 def build_network_message_query(
     guild_id: str,
     *,
-    during_days: int | None = None,
+    start: datetime | None = None,
+    end: datetime | None = None,
     user_id: str | None = None,
     channel_id: str | None = None,
 ) -> dict:
     query = {"guild_id": guild_id}
 
-    if during_days is not None:
-        query["timestamp"] = {
-            "$gte": build_during_since_timestamp(during_days)
-        }
+    # timestampの範囲指定を構築
+    timestamp_query = {}
+    if start is not None:
+        timestamp_query["$gte"] = start
+    if end is not None:
+        timestamp_query["$lte"] = end
+
+    if timestamp_query:
+        query["timestamp"] = timestamp_query
 
     if user_id is not None:
         query["user_id"] = user_id
@@ -46,14 +50,17 @@ def fetch_network_documents(
     db,
     guild_id: str,
     *,
-    during_days: int | None = None,
+    start: datetime | None = None,
+    end: datetime | None = None,
     user_id: str | None = None,
     channel_id: str | None = None,
     limit: int = DEFAULT_MESSAGE_LIMIT,
 ) -> list[dict]:
+    # build_network_message_queryの引数を修正
     query = build_network_message_query(
         guild_id,
-        during_days=during_days,
+        start=start,
+        end=end,
         user_id=user_id,
         channel_id=channel_id,
     )
@@ -73,9 +80,7 @@ def fetch_network_documents(
     )
 
     existing_message_ids = {
-        str(doc["message_id"])
-        for doc in docs
-        if doc.get("message_id") is not None
+        str(doc["message_id"]) for doc in docs if doc.get("message_id") is not None
     }
     missing_reply_target_ids = {
         str(doc["reply_to"])
@@ -145,11 +150,11 @@ def normalize_network_documents(docs: list[dict]) -> tuple[list[dict], int]:
             {
                 "message_id": str(message_id),
                 "user_id": str(author_id),
-                "reply_to": str(doc["reply_to"]) if doc.get("reply_to") is not None else None,
+                "reply_to": str(doc["reply_to"])
+                if doc.get("reply_to") is not None
+                else None,
                 "mentions": [
-                    str(mentioned)
-                    for mentioned in mentions
-                    if mentioned is not None
+                    str(mentioned) for mentioned in mentions if mentioned is not None
                 ],
             }
         )
@@ -157,7 +162,9 @@ def normalize_network_documents(docs: list[dict]) -> tuple[list[dict], int]:
     return valid_docs, invalid_doc_count
 
 
-def build_conversation_edges(docs: list[dict]) -> tuple[dict[tuple[str, str], int], int]:
+def build_conversation_edges(
+    docs: list[dict],
+) -> tuple[dict[tuple[str, str], int], int]:
     valid_docs, invalid_doc_count = normalize_network_documents(docs)
 
     if not valid_docs:
@@ -251,7 +258,9 @@ def calculate_node_size(
         canvas_height_px=canvas_height_px,
     )
     max_label_width, average_label_width = summarize_label_metrics(label_texts)
-    label_width_factor = max(4.0, min(18.0, (max_label_width + average_label_width) / 2))
+    label_width_factor = max(
+        4.0, min(18.0, (max_label_width + average_label_width) / 2)
+    )
 
     return max(1800, min(14000, int(label_font_size * label_width_factor * 14)))
 
@@ -296,7 +305,9 @@ def normalize_layout_positions(
     x_min, x_max = min(x_values), max(x_values)
     y_min, y_max = min(y_values), max(y_values)
 
-    padding_x = min(0.18, max(0.04, (font_size * max_label_width) / (canvas_width_px * 1.6)))
+    padding_x = min(
+        0.18, max(0.04, (font_size * max_label_width) / (canvas_width_px * 1.6))
+    )
     padding_y = min(0.16, max(0.04, (font_size * 1.8) / canvas_height_px))
 
     normalized_positions = {}
@@ -311,7 +322,9 @@ def normalize_layout_positions(
     return normalized_positions
 
 
-def calculate_edge_widths(weights: list[int], node_count: int, label_font_size: int) -> list[float]:
+def calculate_edge_widths(
+    weights: list[int], node_count: int, label_font_size: int
+) -> list[float]:
     density_factor = max(0.7, 1.2 - math.log2(node_count + 1) * 0.12)
     return [
         max(1.5, min(18.0, math.sqrt(weight) * (label_font_size / 18) * density_factor))
@@ -381,7 +394,9 @@ def generate_conversation_network(
 
     try:
         weights = [graph[node_u][node_v]["weight"] for node_u, node_v in graph.edges()]
-        edge_widths = calculate_edge_widths(weights, graph.number_of_nodes(), label_font_size)
+        edge_widths = calculate_edge_widths(
+            weights, graph.number_of_nodes(), label_font_size
+        )
         figure.patch.set_facecolor("#F8FAFC")
         ax.set_facecolor("#F8FAFC")
 

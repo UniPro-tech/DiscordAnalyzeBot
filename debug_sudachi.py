@@ -24,7 +24,7 @@ for text in test_texts:
     print(f"\nText: 『{text}』")
     print("-" * 60)
     tokens = tokenizer_obj.tokenize(text, MODE)
-    
+
     for i, token in enumerate(tokens):
         surface = token.surface()
         pos = token.part_of_speech()

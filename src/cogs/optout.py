@@ -6,11 +6,7 @@ from libs.embed import EmbedHelper
 from libs.message_store import delete_messages_by_query
 
 
-OptoutTargetChannel = (
-    discord.TextChannel
-    | discord.VoiceChannel
-    | discord.ForumChannel
-)
+OptoutTargetChannel = discord.TextChannel | discord.VoiceChannel | discord.ForumChannel
 
 
 class Optout(commands.Cog):
@@ -143,7 +139,10 @@ class Optout(commands.Cog):
 
         target_channel = channel
         if target_channel is None:
-            if isinstance(interaction.channel, (discord.TextChannel, discord.VoiceChannel, discord.ForumChannel)):
+            if isinstance(
+                interaction.channel,
+                (discord.TextChannel, discord.VoiceChannel, discord.ForumChannel),
+            ):
                 target_channel = interaction.channel
             elif isinstance(interaction.channel, discord.Thread) and isinstance(
                 interaction.channel.parent,

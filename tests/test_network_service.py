@@ -75,7 +75,12 @@ def test_build_conversation_edges_counts_reply_and_mentions():
     docs = [
         {"message_id": "1", "user_id": "10", "reply_to": None, "mentions": []},
         {"message_id": "2", "user_id": "20", "reply_to": "1", "mentions": []},
-        {"message_id": "3", "user_id": "20", "reply_to": None, "mentions": ["10", "30"]},
+        {
+            "message_id": "3",
+            "user_id": "20",
+            "reply_to": None,
+            "mentions": ["10", "30"],
+        },
         {"message_id": None, "user_id": "99", "reply_to": None, "mentions": []},
     ]
 
@@ -161,9 +166,13 @@ def test_generate_conversation_network_uses_provided_labels(monkeypatch):
         captured["font_size"] = _kwargs["font_size"]
         return {}
 
-    monkeypatch.setattr("libs.network_service.resolve_font_path", lambda: "fonts/ipaexg.ttf")
+    monkeypatch.setattr(
+        "libs.network_service.resolve_font_path", lambda: "fonts/ipaexg.ttf"
+    )
     monkeypatch.setattr("libs.network_service.nx.draw", _fake_draw)
-    monkeypatch.setattr("libs.network_service.nx.draw_networkx_labels", _fake_draw_networkx_labels)
+    monkeypatch.setattr(
+        "libs.network_service.nx.draw_networkx_labels", _fake_draw_networkx_labels
+    )
 
     generate_conversation_network(
         {("10", "20"): 2},

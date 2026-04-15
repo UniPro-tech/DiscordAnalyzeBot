@@ -1,5 +1,5 @@
 import asyncio
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 from zoneinfo import ZoneInfo
 
@@ -17,13 +17,13 @@ from libs.wordcloud_service import (
     get_frequency_label,
     learn_from_texts,
     migrate_message_tokens,
-    parse_during_days,
     parse_schedule_time,
     should_execute_schedule,
     update_compounds,
     update_last_executed,
     update_last_learn_id,
 )
+from libs.parser import parse_discord_timestamp
 
 
 class WordCloud(commands.Cog):
@@ -51,7 +51,9 @@ class WordCloud(commands.Cog):
             print("[WordCloud] Starting token migration for existing messages...")
             count = await asyncio.to_thread(migrate_message_tokens, self.bot.db)
             if count > 0:
-                print(f"[WordCloud] Token migration complete: {count} messages updated.")
+                print(
+                    f"[WordCloud] Token migration complete: {count} messages updated."
+                )
             else:
                 print("[WordCloud] Token migration: all messages already have tokens.")
         except Exception as e:
@@ -130,15 +132,17 @@ class WordCloud(commands.Cog):
         description="ワードクラウドを生成します",
     )
     @app_commands.describe(
-        during="ワードクラウドの元になる期間（単位: 日。1なら当日0:00以降、2なら前日0:00以降）",
-        user="特定のユーザーのメッセージからワードクラウドを生成します（省略した場合は全ユーザーのメッセージから生成）",
-        channel="特定のチャンネルのメッセージからワードクラウドを生成します（省略した場合は全チャンネルのメッセージから生成）",
-        role="特定のロールを持つユーザーのメッセージからワードクラウドを生成します（省略した場合は全ユーザーのメッセージから生成）",
+        start="解析する期間の初め。@time機能を用いてください (例: <t:1776261427:f>)",
+        end="解析する期間の終わり。@time機能を用いてください",
+        user="特定のユーザーのメッセージからワードクラウドを生成します",
+        channel="特定のチャンネルのメッセージからワードクラウドを生成します",
+        role="特定のロールを持つユーザーのメッセージからワードクラウドを生成します",
     )
     async def generate(
         self,
         interaction: discord.Interaction,
-        during: Optional[str] = None,
+        start: Optional[str] = None,
+        end: Optional[str] = None,
         user: Optional[discord.User] = None,
         channel: Optional[discord.TextChannel] = None,
         role: Optional[discord.Role] = None,
@@ -152,20 +156,18 @@ class WordCloud(commands.Cog):
             await interaction.response.send_message(embed=embed, ephemeral=True)
             return
 
+        # タイムスタンプのパース
+        start_dt: Optional[datetime] = None
+        end_dt: Optional[datetime] = None
         try:
-            during_days = parse_during_days(during)
+            start_dt = parse_discord_timestamp(start)
+            end_dt = parse_discord_timestamp(end)
         except ValueError:
             embed = embed_helper.create_error_embed(
-                title="エラー", description="期間は1以上の数値で指定してください。"
+                title="引数エラー",
+                description="時間の指定が正しくありません。\nDiscordのタイムスタンプ機能を使って入力してください。（例: `<t:1776261427:f>`）",
             )
             await interaction.response.send_message(embed=embed, ephemeral=True)
-            return
-        except Exception as error:
-            embed = embed_helper.create_error_embed(
-                title="エラー", description="期間の処理中にエラーが発生しました"
-            )
-            await interaction.response.send_message(embed=embed, ephemeral=True)
-            print(f"Error processing during: {error}")
             return
 
         await interaction.response.defer(thinking=True)
@@ -175,7 +177,8 @@ class WordCloud(commands.Cog):
                 fetch_wordcloud_documents,
                 self.bot.db,
                 str(interaction.guild_id),
-                during_days=during_days,
+                start=start_dt,  # 修正箇所
+                end=end_dt,  # 修正箇所
                 user_id=str(user.id) if user is not None else None,
                 channel_id=str(channel.id) if channel is not None else None,
                 role_id=str(role.id) if role is not None else None,
@@ -228,6 +231,8 @@ class WordCloud(commands.Cog):
             embed=embed, file=discord.File(fp=image_buffer, filename="wordcloud.png")
         )
 
+    # ... [schedule, list_schedules, remove_schedule コマンドは変更なしのため省略せずにそのまま維持] ...
+    # (ここでは先ほどのコードのままで問題ありません)
     @wordcloud_group.command(
         name="schedule",
         description="指定されたチャンネルに定期的にワードクラウドを送信するようスケジュールします",
@@ -262,7 +267,6 @@ class WordCloud(commands.Cog):
             await interaction.response.send_message(embed=embed, ephemeral=True)
             return
 
-        # チャンネル管理権限チェック
         if interaction.permissions.manage_channels is False:
             embed = embed_helper.create_error_embed(
                 title="エラー",
@@ -280,7 +284,6 @@ class WordCloud(commands.Cog):
             await interaction.response.send_message(embed=embed, ephemeral=True)
             return
 
-        # 既存の設定をチェック
         existing = await asyncio.to_thread(
             self.bot.db.guild_settings.find_one,
             {
@@ -298,7 +301,6 @@ class WordCloud(commands.Cog):
             await interaction.response.send_message(embed=embed, ephemeral=True)
             return
 
-        # 新しい設定を追加
         try:
             await asyncio.to_thread(
                 self.bot.db.guild_settings.insert_one,
@@ -344,7 +346,6 @@ class WordCloud(commands.Cog):
             await interaction.response.send_message(embed=embed, ephemeral=True)
             return
 
-        # チャンネル管理権限チェック
         if interaction.permissions.manage_channels is False:
             embed = embed_helper.create_error_embed(
                 title="エラー",
@@ -446,7 +447,6 @@ class WordCloud(commands.Cog):
             await interaction.response.send_message(embed=embed, ephemeral=True)
             return
 
-        # チャンネル管理権限チェック
         if interaction.permissions.manage_channels is False:
             embed = embed_helper.create_error_embed(
                 title="エラー",
@@ -492,7 +492,6 @@ class WordCloud(commands.Cog):
         """定期的にスケジュールされたワードクラウド生成をチェック"""
         now = discord.utils.utcnow().astimezone(self.JST)
 
-        # 有効な設定を取得
         try:
             settings = await asyncio.to_thread(
                 lambda: list(self.bot.db.guild_settings.find({"enabled": True}))
@@ -512,7 +511,6 @@ class WordCloud(commands.Cog):
             if parsed_time is None:
                 continue
 
-            # 指定時刻(JST)に一致した時だけ候補にする
             if now.hour != parsed_time[0] or now.minute != parsed_time[1]:
                 continue
 
@@ -521,7 +519,6 @@ class WordCloud(commands.Cog):
 
     @check_scheduled_wordclouds.before_loop
     async def before_check_scheduled_wordclouds(self):
-        """Bot準備完了を待つ"""
         await self.bot.wait_until_ready()
 
     async def _execute_scheduled_wordcloud(
@@ -547,12 +544,19 @@ class WordCloud(commands.Cog):
                 print(f"Unknown schedule frequency: {frequency}")
                 return
 
+            # start_dt の計算: 当日の0:00から指定日数分さかのぼった時間を UTC datetime として用意する
+            start_local = now_jst.replace(
+                hour=0, minute=0, second=0, microsecond=0
+            ) - timedelta(days=during_days - 1)
+            start_dt = start_local.astimezone(timezone.utc)
+
             try:
                 docs = await asyncio.to_thread(
                     fetch_wordcloud_documents,
                     self.bot.db,
                     guild_id,
-                    during_days=during_days,
+                    start=start_dt,  # 計算した開始日時を渡す
+                    end=None,  # 定期実行は「今」までなのでNone
                 )
             except Exception as error:
                 print(f"Database query error for scheduled wordcloud: {error}")
@@ -611,6 +615,7 @@ class WordCloud(commands.Cog):
     @tasks.loop(minutes=10)
     async def background_learn(self):
         try:
+
             def _learn_batch_sync() -> None:
                 last_id = self.bot.db.meta.find_one({"_id": "last_learn_id"})
                 docs = fetch_learning_documents(

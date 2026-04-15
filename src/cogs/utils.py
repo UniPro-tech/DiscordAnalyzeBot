@@ -7,6 +7,7 @@ from discord.ext import commands
 from libs.embed import EmbedHelper
 from libs.text_processing import analyze_sudachi_pos
 
+
 class Utils(commands.Cog):
     utils_group = app_commands.Group(
         name="utils",
@@ -39,7 +40,6 @@ class Utils(commands.Cog):
         mode: app_commands.Choice[str] | None = None,
     ):
         embed_helper = EmbedHelper(function_name="Admin Sudachi POS")
-
 
         if not text.strip():
             embed = embed_helper.create_warning_embed(
@@ -80,7 +80,9 @@ class Utils(commands.Cog):
         max_display = 25
         lines = [
             f"{index}. {surface} -> {' / '.join(pos)} (原形: {base_form})"
-            for index, (surface, pos, base_form) in enumerate(results[:max_display], start=1)
+            for index, (surface, pos, base_form) in enumerate(
+                results[:max_display], start=1
+            )
         ]
 
         if len(results) > max_display:

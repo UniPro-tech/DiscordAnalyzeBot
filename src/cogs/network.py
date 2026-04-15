@@ -2,6 +2,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 from typing import Optional
+from datetime import datetime
 
 from libs.embed import EmbedHelper
 from libs.network_service import (
@@ -10,11 +11,10 @@ from libs.network_service import (
     fetch_network_documents,
     generate_conversation_network,
 )
-from libs.wordcloud_service import parse_during_days
+from libs.parser import parse_discord_timestamp
 
 
 class ConversationNetwork(commands.Cog):
-
     MAX_MESSAGE_COUNT = 5000
 
     network_group = app_commands.Group(
@@ -30,14 +30,16 @@ class ConversationNetwork(commands.Cog):
         description="会話ネットワークを生成します",
     )
     @app_commands.describe(
-        during="解析する期間（日）。1なら当日0:00以降、2なら前日0:00以降",
+        start="解析する期間の初め (例: 2023-04-01)",
+        end="解析する期間の終わり (例: 2023-04-30)",
         user="特定ユーザーのみ解析",
         channel="特定チャンネルのみ解析",
     )
     async def generate_network(
         self,
         interaction: discord.Interaction,
-        during: Optional[str] = None,
+        start: Optional[str] = None,
+        end: Optional[str] = None,
         user: Optional[discord.User] = None,
         channel: Optional[discord.TextChannel] = None,
     ):
@@ -59,34 +61,34 @@ class ConversationNetwork(commands.Cog):
             await interaction.response.send_message(embed=embed, ephemeral=True)
             return
 
-        if during:
-            try:
-                during_days = parse_during_days(during)
-            except ValueError:
-                embed = embed_helper.create_error_embed(
-                    title="エラー",
-                    description="期間は1以上の数値で指定してください。",
-                )
-                await interaction.response.send_message(embed=embed, ephemeral=True)
-                return
-            except Exception as e:
-                embed = embed_helper.create_error_embed(
-                    title="エラー",
-                    description="期間の処理中にエラーが発生しました。",
-                )
-                await interaction.response.send_message(embed=embed, ephemeral=True)
-                print(f"Error processing network during: {e}")
-                return
-        else:
-            during_days = None
-
         await interaction.response.defer(thinking=True)
 
+        # --- 文字列の期間引数を datetime に変換 ---
+        start_dt: Optional[datetime] = None
+        end_dt: Optional[datetime] = None
+
         try:
+            # 注: プロジェクトに専用のパース関数があればそれを使ってください
+            # ここでは簡易的に ISO形式(YYYY-MM-DD) を想定しています
+            if start:
+                start_dt = parse_discord_timestamp(start)
+            if end:
+                end_dt = parse_discord_timestamp(end)
+        except ValueError:
+            embed = embed_helper.create_error_embed(
+                title="引数エラー",
+                description="日付の形式が正しくありません (YYYY-MM-DD 形式で入力してください)",
+            )
+            await interaction.followup.send(embed=embed)
+            return
+
+        try:
+            # fetch_network_documents の引数を during_days から start, end に変更
             docs = fetch_network_documents(
                 self.bot.db,
                 str(interaction.guild_id),
-                during_days=during_days,
+                start=start_dt,  # 修正
+                end=end_dt,  # 修正
                 user_id=str(user.id) if user else None,
                 channel_id=str(channel.id) if channel else None,
                 limit=self.MAX_MESSAGE_COUNT,
@@ -97,7 +99,7 @@ class ConversationNetwork(commands.Cog):
                 description="データ取得中にエラーが発生しました",
             )
             await interaction.followup.send(embed=embed)
-            print(e)
+            print(f"Error fetching documents: {e}")
             return
 
         if not docs:
@@ -166,7 +168,7 @@ class ConversationNetwork(commands.Cog):
                 description="ネットワーク生成中にエラーが発生しました",
             )
             await interaction.followup.send(embed=embed)
-            print(e)
+            print(f"Error generating network: {e}")
             return
 
         embed = embed_helper.create_success_embed(

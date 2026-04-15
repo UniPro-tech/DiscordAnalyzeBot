@@ -71,8 +71,12 @@ def test_should_execute_schedule_for_daily_compares_dates_only():
     now = datetime(2026, 3, 12, 9, 0, tzinfo=JST)
 
     assert should_execute_schedule("daily", None, now, JST) is True
-    assert should_execute_schedule("daily", "2026-03-11T23:50:00+09:00", now, JST) is True
-    assert should_execute_schedule("daily", "2026-03-12T00:00:00+09:00", now, JST) is False
+    assert (
+        should_execute_schedule("daily", "2026-03-11T23:50:00+09:00", now, JST) is True
+    )
+    assert (
+        should_execute_schedule("daily", "2026-03-12T00:00:00+09:00", now, JST) is False
+    )
 
 
 def test_should_execute_schedule_for_monthly_on_actual_month_end():
@@ -254,8 +258,7 @@ def test_learn_from_texts_uses_bulk_write_and_aggregates_counts():
 
     unigram_ops = db.unigrams.bulk_calls[0][0]
     unigram_counts = {
-        op._filter["word"]: op._doc["$inc"]["count"]
-        for op in unigram_ops
+        op._filter["word"]: op._doc["$inc"]["count"] for op in unigram_ops
     }
     assert unigram_counts["経済"] == 2
     assert unigram_counts["社会"] == 2

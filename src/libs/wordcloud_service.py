@@ -51,16 +51,17 @@ def build_during_since_timestamp(during_days: int, *, tz=JST) -> str:
         raise ValueError("during must be positive")
 
     now_local = discord_utcnow().astimezone(tz)
-    since_local = now_local.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(
-        days=during_days - 1
-    )
+    since_local = now_local.replace(
+        hour=0, minute=0, second=0, microsecond=0
+    ) - timedelta(days=during_days - 1)
     return since_local.astimezone(timezone.utc).isoformat()
 
 
 def build_wordcloud_message_query(
     guild_id: str,
     *,
-    during_days: int | None = None,
+    start: datetime | None = None,
+    end: datetime | None = None,
     user_id: str | None = None,
     channel_id: str | None = None,
     role_id: str | None = None,
@@ -70,10 +71,15 @@ def build_wordcloud_message_query(
         "content": {"$type": "string", "$ne": ""},
     }
 
-    if during_days is not None:
-        query["timestamp"] = {
-            "$gte": build_during_since_timestamp(during_days)
-        }
+    # timestampの範囲指定を構築
+    timestamp_query = {}
+    if start is not None:
+        timestamp_query["$gte"] = start
+    if end is not None:
+        timestamp_query["$lte"] = end
+
+    if timestamp_query:
+        query["timestamp"] = timestamp_query
 
     if user_id is not None:
         query["user_id"] = user_id
@@ -97,7 +103,8 @@ def fetch_wordcloud_documents(
     db,
     guild_id: str,
     *,
-    during_days: int | None = None,
+    start: datetime | None = None,
+    end: datetime | None = None,
     user_id: str | None = None,
     channel_id: str | None = None,
     role_id: str | None = None,
@@ -105,14 +112,17 @@ def fetch_wordcloud_documents(
 ) -> list[dict]:
     query = build_wordcloud_message_query(
         guild_id,
-        during_days=during_days,
+        start=start,
+        end=end,
         user_id=user_id,
         channel_id=channel_id,
         role_id=role_id,
     )
 
     return list(
-        db.messages.find(query, {"content": 1, "tokens": 1}).sort("timestamp", -1).limit(limit)
+        db.messages.find(query, {"content": 1, "tokens": 1})
+        .sort("timestamp", -1)
+        .limit(limit)
     )
 
 
@@ -251,7 +261,9 @@ def learn_from_texts(db, texts: list[str], workers: int = 4) -> None:
         db.ngrams.bulk_write(ngram_ops, ordered=False)
 
 
-def _compute_bigram_pmi(db, left_word: str, right_word: str, total: int) -> float | None:
+def _compute_bigram_pmi(
+    db, left_word: str, right_word: str, total: int
+) -> float | None:
     bigram_doc = db.ngrams.find_one({"ngram": [left_word, right_word]})
 
     if not bigram_doc:
@@ -285,7 +297,8 @@ def update_compounds(db) -> None:
 
     # 全unigramをロードして、PMI計算で頻度参照するための辞書を作る。
     unigram_counts: dict[str, int] = {
-        doc["word"]: doc["count"] for doc in db.unigrams.find({}, {"word": 1, "count": 1})
+        doc["word"]: doc["count"]
+        for doc in db.unigrams.find({}, {"word": 1, "count": 1})
     }
 
     # ngramを全件ロードして、PMI計算して、条件を満たすものをDBに保存する。
@@ -348,11 +361,15 @@ def update_compounds(db) -> None:
             if kind == "bigram":
                 w1, w2 = key
                 if pmi >= PMI_THRESHOLD:
-                    db.compounds.update_one({"word": w1 + w2}, {"$set": {"pmi": pmi}}, upsert=True)
+                    db.compounds.update_one(
+                        {"word": w1 + w2}, {"$set": {"pmi": pmi}}, upsert=True
+                    )
                     accepted_bigrams[(w1, w2)] = pmi
             else:
                 if pmi >= PMI_THRESHOLD:
-                    db.compounds.update_one({"word": "".join(key)}, {"$set": {"pmi": pmi}}, upsert=True)
+                    db.compounds.update_one(
+                        {"word": "".join(key)}, {"$set": {"pmi": pmi}}, upsert=True
+                    )
 
     # 条件を満たすbigramの中で、さらに両側に同じbigramが条件を満たすものは、重複bigramを避けるために3-gramとしても保存する。
     bigrams_by_left: dict[str, list[tuple[str, float]]] = {}
@@ -365,7 +382,9 @@ def update_compounds(db) -> None:
             trigram_pmi = min(left_pmi, right_pmi)
 
             if trigram_pmi >= PMI_THRESHOLD:
-                db.compounds.update_one({"word": w1 + w2 + w3}, {"$set": {"pmi": trigram_pmi}}, upsert=True)
+                db.compounds.update_one(
+                    {"word": w1 + w2 + w3}, {"$set": {"pmi": trigram_pmi}}, upsert=True
+                )
 
     # 学習の最後に、抽出トークンのキャッシュをクリアして、次回以降の抽出で新しい複合語を反映させる。
     clear_extract_tokens_cache()

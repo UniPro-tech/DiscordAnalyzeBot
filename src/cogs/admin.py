@@ -88,7 +88,9 @@ class Admin(commands.Cog):
             if not docs:
                 break
 
-            texts = [doc["content"] for doc in docs if (doc.get("content") or "").strip()]
+            texts = [
+                doc["content"] for doc in docs if (doc.get("content") or "").strip()
+            ]
             if texts:
                 learn_from_texts(self.bot.db, texts, workers=1)
                 learned_message_count += len(texts)

@@ -190,6 +190,7 @@ async def on_message(message):
 
     await bot.process_commands(message)
 
+
 @bot.event
 async def on_guild_remove(guild):
     print(f"Left guild: {guild.name} (ID: {guild.id})")

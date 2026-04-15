@@ -48,7 +48,7 @@ STOP_WORDS = {
     "お疲れ様",
     "うち",
     "はず",
-    "ごめん"
+    "ごめん",
 }
 
 tokenizer_obj = dictionary.Dictionary().create()
