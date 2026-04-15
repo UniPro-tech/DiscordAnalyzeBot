@@ -1,5 +1,5 @@
 from calendar import monthrange
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 import io
 from typing import Optional
 from collections import Counter
@@ -46,15 +46,26 @@ def parse_period_days(period: Optional[str]) -> int | None:
     return parse_during_days(period)
 
 
-def build_during_since_timestamp(during_days: int, *, tz=JST) -> str:
-    if during_days <= 0:
-        raise ValueError("during must be positive")
+def get_schedule_start_datetime(frequency: str, now_jst: datetime) -> datetime | None:
+    """
+    スケジュール頻度に応じた解析開始日時を計算する。
+    - daily: 実行時刻から24時間前（相対）
+    - weekly: 実行時刻から7日前（相対）
+    - monthly: 実行した月の1日 00:00:00（固定）
+    """
+    if frequency == "daily":
+        # 現在時刻からちょうど24時間前
+        return now_jst - timedelta(days=1)
 
-    now_local = discord_utcnow().astimezone(tz)
-    since_local = now_local.replace(
-        hour=0, minute=0, second=0, microsecond=0
-    ) - timedelta(days=during_days - 1)
-    return since_local.astimezone(timezone.utc).isoformat()
+    if frequency == "weekly":
+        # 現在時刻からちょうど7日前
+        return now_jst - timedelta(days=7)
+
+    if frequency == "monthly":
+        # 実行した月の「1日 00:00:00」を生成
+        return now_jst.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+    return None
 
 
 def build_wordcloud_message_query(

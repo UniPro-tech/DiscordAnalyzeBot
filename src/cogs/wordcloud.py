@@ -1,5 +1,5 @@
 import asyncio
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Optional
 from zoneinfo import ZoneInfo
 
@@ -13,7 +13,7 @@ from libs.wordcloud_service import (
     fetch_learning_documents,
     fetch_wordcloud_documents,
     generate_wordcloud_image,
-    get_schedule_during_days,
+    get_schedule_start_datetime,
     get_frequency_label,
     learn_from_texts,
     migrate_message_tokens,
@@ -539,16 +539,16 @@ class WordCloud(commands.Cog):
                 return
 
             now_jst = discord.utils.utcnow().astimezone(self.JST)
-            during_days = get_schedule_during_days(frequency, now_jst)
-            if during_days is None:
+
+            # ====== ここから修正 ======
+            start_dt_jst = get_schedule_start_datetime(frequency, now_jst)
+            if start_dt_jst is None:
                 print(f"Unknown schedule frequency: {frequency}")
                 return
 
-            # start_dt の計算: 当日の0:00から指定日数分さかのぼった時間を UTC datetime として用意する
-            start_local = now_jst.replace(
-                hour=0, minute=0, second=0, microsecond=0
-            ) - timedelta(days=during_days - 1)
-            start_dt = start_local.astimezone(timezone.utc)
+            # DBクエリ用にUTCのdatetimeに変換
+            start_dt = start_dt_jst.astimezone(timezone.utc)
+            # ====== ここまで修正 ======
 
             try:
                 docs = await asyncio.to_thread(
@@ -589,12 +589,17 @@ class WordCloud(commands.Cog):
                 )
                 return
 
+            # ====== Embed作成部分も少しリッチに修正 ======
             embed = embed_helper.create_success_embed(
                 title=f"{get_frequency_label(frequency)}ワードクラウド",
-                description=f"最新{len(docs)}件のメッセージから生成されました！",
+                description=(
+                    f"対象期間: {start_dt_jst.strftime('%Y/%m/%d %H:%M')} ～ 現在\n"
+                    f"最新{len(docs)}件のメッセージから生成されました！"
+                ),
                 binary_data=image_buffer.getvalue(),
                 binary_filename="wordcloud.png",
             )
+            # ====== ここまで ======
 
             await channel.send(
                 embed=embed,
