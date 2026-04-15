@@ -170,7 +170,7 @@ async def on_message(message):
         "parent_channel_id": parent_channel_id,
         "channel_name": str(message.channel),
         "content": message.content,
-        "timestamp": message.created_at.isoformat(),
+        "timestamp": message.created_at,
         "role_ids": [str(role.id) for role in roles] if roles else [],
         "reply_to": reply_to,
         "mentions": [str(user.id) for user in message.mentions],
@@ -312,5 +312,38 @@ async def main():
         await bot.start(TOKEN)
 
 
+def migrate_timestamps_to_date():
+    if not DB_DSN:
+        print("エラー: MONGODB_DSN が設定されていません。")
+        return
+
+    client_db = MongoClient(DB_DSN)
+    db = client_db["discord_analyzer"]
+
+    print("timestampの型変換を開始します...")
+
+    # 対象: timestampフィールドが文字列(string)であるドキュメント
+    filter_query = {"timestamp": {"$type": "string"}}
+
+    # 更新内容: 文字列をDate型に変換する($toDate)
+    update_pipeline = [{"$set": {"timestamp": {"$toDate": "$timestamp"}}}]
+
+    try:
+        # update_manyにパイプライン（リスト形式）を渡すことでサーバー側で一括変換
+        result = db.messages.update_many(filter_query, update_pipeline)
+
+        print(f"Target Document Count: {result.matched_count}")
+        print(f"Updated Document Count {result.modified_count}")
+        print("Migration Successfully")
+
+    except Exception as e:
+        print(f"Migration failed: {e}")
+        raise
+    finally:
+        client_db.close()
+
+
 if __name__ == "__main__":
+    if os.getenv("RUN_TIMESTAMP_MIGRATION") == "1":
+        migrate_timestamps_to_date()
     asyncio.run(main())

@@ -29,5 +29,7 @@ spec:
           env:
             - name: TZ
               value: Asia/Tokyo
+            - name: RUN_TIMESTAMP_MIGRATION
+              value: "1"
       imagePullSecrets:
         - name: internal-harbor
