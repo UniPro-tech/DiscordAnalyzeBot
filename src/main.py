@@ -337,7 +337,10 @@ def migrate_timestamps_to_date():
         print("Migration Successfully")
 
     except Exception as e:
-        print(f"An error occured: {e}")
+        print(f"Migration failed: {e}")
+        raise
+    finally:
+        client_db.close()
 
 
 if __name__ == "__main__":
