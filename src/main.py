@@ -344,5 +344,6 @@ def migrate_timestamps_to_date():
 
 
 if __name__ == "__main__":
-    migrate_timestamps_to_date()
+    if os.getenv("RUN_TIMESTAMP_MIGRATION") == "1":
+        migrate_timestamps_to_date()
     asyncio.run(main())
