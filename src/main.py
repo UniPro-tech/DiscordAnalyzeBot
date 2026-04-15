@@ -53,7 +53,7 @@ def setup_db():
     bot.db.messages.create_index("reply_to")
 
     # TTL Index: 30日後に自動的に削除
-    bot.db.messages.create_index("timestamp", expireAfterSeconds=30 * 24 * 60 * 60)
+    bot.db.messages.create_index("timestamp", expireAfterSeconds=31 * 24 * 60 * 60)
 
     # Guild設定のインデックス設定
     bot.db.guild_settings.create_index(
