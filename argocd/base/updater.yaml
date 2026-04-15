@@ -9,7 +9,7 @@ spec:
     - namePattern: "analyze-bot"
       images:
         - alias: "analyze-bot"
-          imageName: "registry.uniproject.jp/official/analyze-bot:x.x.x"
+          imageName: "registry.uniproject.jp/official/analyze-bot:x.x.x-x"
           commonUpdateSettings:
             updateStrategy: "semver"
         - alias: "mongo"
