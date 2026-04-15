@@ -249,7 +249,7 @@ async def on_guild_join(guild):
         owner = guild.owner  # サーバーオーナー
 
         if owner is None:
-            print(f"{guild.name} のオーナー情報が取得できませんでした")
+            print(f"Failed to get owner info: {guild.name}")
             return
 
         message = """
@@ -314,13 +314,13 @@ async def main():
 
 def migrate_timestamps_to_date():
     if not DB_DSN:
-        print("エラー: MONGODB_DSN が設定されていません。")
+        print("Error: Mongo DB_DSN is not set")
         return
 
     client_db = MongoClient(DB_DSN)
     db = client_db["discord_analyzer"]
 
-    print("timestampの型変換を開始します...")
+    print("Starting migrate type of timestamp to datetime...")
 
     # 対象: timestampフィールドが文字列(string)であるドキュメント
     filter_query = {"timestamp": {"$type": "string"}}
