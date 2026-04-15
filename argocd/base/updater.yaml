@@ -17,6 +17,6 @@ spec:
           commonUpdateSettings:
             updateStrategy: "semver"
         - alias: "analyze-bot-site"
-          imageName: "registry.uniproject.jp/official/analyze-bot-site:x.x.x"
+          imageName: "registry.uniproject.jp/official/analyze-bot-site:x.x.x-x"
           commonUpdateSettings:
             updateStrategy: "semver"
