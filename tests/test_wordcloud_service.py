@@ -48,6 +48,19 @@ def test_build_during_since_timestamp_uses_jst_day_boundary(monkeypatch):
     )
 
 
+def test_build_during_since_timestamp_returns_datetime_type(monkeypatch):
+    monkeypatch.setattr(
+        "libs.wordcloud_service.discord_utcnow",
+        lambda: datetime(2026, 3, 13, 10, 45, tzinfo=timezone.utc),
+    )
+
+    since = build_during_since_timestamp(1)
+
+    assert isinstance(since, datetime)
+    assert since.tzinfo == timezone.utc
+    assert since.isoformat() == "2026-03-12T15:00:00+00:00"
+
+
 def test_get_schedule_during_days_matches_frequency():
     now = datetime(2026, 3, 31, 9, 0, tzinfo=JST)
 

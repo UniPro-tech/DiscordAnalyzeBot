@@ -102,3 +102,25 @@ def delete_guild_data(db, guild_id: str) -> dict[str, int]:
         "guild_settings": deleted_schedules,
         "channel_settings": deleted_channel_settings,
     }
+
+
+def migrate_timestamp_to_datetime(db) -> int:
+    """既存のISO文字列型 timestamp を datetime型に変換"""
+    from datetime import datetime as dt
+
+    result = db.messages.update_many(
+        {"timestamp": {"$type": "string"}},
+        [
+            {
+                "$set": {
+                    "timestamp": {
+                        "$dateFromString": {
+                            "dateString": "$timestamp",
+                            "onError": None,
+                        }
+                    }
+                }
+            }
+        ],
+    )
+    return result.modified_count

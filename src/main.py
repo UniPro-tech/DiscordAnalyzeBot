@@ -55,12 +55,17 @@ def setup_db():
     # TTL Index: 30日後に自動的に削除
     # timestampフィールド（datetime型）に対してTTLが機能
     bot.db.messages.create_index("timestamp", expireAfterSeconds=30 * 24 * 60 * 60)
-    
+
     # 互換性フィールド用インデックス（既存のISO文字列形式）
-    bot.db.messages.create_index("timestamp_iso")
-    
+    bot.db.messages.create_index(
+        "timestamp_iso",
+        partialFilterExpression={"timestamp_iso": {"$exists": True}},
+    )
     # サーバーごとのメッセージ取得を速くする複合インデックス
-    bot.db.messages.create_index([("guild_id", 1), ("timestamp", -1)])
+    bot.db.messages.create_index(
+        [("guild_id", 1), ("timestamp", -1)],
+        partialFilterExpression={"timestamp": {"$type": "date"}},
+    )
 
     # Guild設定のインデックス設定
     bot.db.guild_settings.create_index(
