@@ -128,7 +128,7 @@ def _generate_graph_worker(data: list, graph_type: str) -> Optional[discord.File
         return buf.getvalue()
 
     finally:
-        plt.close()  # メモリリーク防止
+        plt.close(fig)  # メモリリーク防止
 
 
 class Statistics(commands.Cog):
