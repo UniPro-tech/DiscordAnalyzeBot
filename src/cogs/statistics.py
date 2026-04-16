@@ -17,6 +17,7 @@ import matplotlib.font_manager as fm
 
 from libs.parser import parse_discord_timestamp
 from libs.visualization_common import resolve_font_path
+from libs.embed import EmbedHelper
 
 
 def setup_japanese_font():
@@ -214,10 +215,10 @@ class Statistics(commands.Cog):
         interval: str = "monthly",  # 月別か日別かの指定を受け取る
     ):
         """全グラフコマンド共通のデータ取得・生成・送信ロジック"""
+        embed_helper = EmbedHelper(function_name="Statistics")
         if interaction.guild_id is None:
-            await interaction.response.send_message(
-                "このコマンドはサーバー内でご利用ください。", ephemeral=True
-            )
+            embed = embed_helper.create_guild_only_error()
+            await interaction.response.send_message(embed=embed, ephemeral=True)
             return
 
         # タイムスタンプのパース
@@ -228,8 +229,12 @@ class Statistics(commands.Cog):
             if end:
                 end_dt = parse_discord_timestamp(end)
         except ValueError:
+            embed = embed_helper.create_error_embed(
+                title="入力エラー",
+                description="時間の指定が正しくありません。Discordのタイムスタンプ機能を使って入力してください。",
+            )
             await interaction.response.send_message(
-                "時間の指定が正しくありません。Discordのタイムスタンプ機能を使って入力してください。",
+                embed=embed,
                 ephemeral=True,
             )
             return
@@ -316,15 +321,16 @@ class Statistics(commands.Cog):
             data = await asyncio.to_thread(fetch_data)
         except Exception as e:
             print(f"Database error in graphs: {e}")
-            await interaction.followup.send(
-                "データベースからのデータ取得中にエラーが発生しました。"
+            embed = embed_helper.create_error_embed(
+                title="内部エラー",
+                description="データベースからのデータ取得中にエラーが発生しました。",
             )
+            await interaction.followup.send(embed=embed)
             return
 
         if not data:
-            await interaction.followup.send(
-                "指定された条件に一致するメッセージが見つかりませんでした。"
-            )
+            embed = embed_helper.create_no_data_error(is_filtered=True)
+            await interaction.followup.send(embed=embed)
             return
 
         # グラフ生成 (intervalをワーカーに渡す)
@@ -335,18 +341,26 @@ class Statistics(commands.Cog):
             )
         except Exception as e:
             print(f"Graph generation error in graphs: {e}")
-            await interaction.followup.send("グラフの生成中にエラーが発生しました。")
+            embed = embed_helper.create_error_embed(
+                title="内部エラー", description="グラフの生成中にエラーが発生しました。"
+            )
+            await interaction.followup.send(embed=embed)
             return
 
         if not image_bytes:
-            await interaction.followup.send("グラフの生成に失敗しました。")
+            embed = embed_helper.create_error_embed(
+                title="内部エラー", description="グラフの生成中にエラーが発生しました。"
+            )
+            await interaction.followup.send(embed=embed)
             return
 
-        file = discord.File(io.BytesIO(image_bytes), filename=f"graph_{graph_type}.png")
-        await interaction.followup.send(
-            content=f":bar_chart: {interaction.user.mention} グラフの生成が完了しました！\n(集計バケット数: {len(data):,}件)",
-            file=file,
+        embed = embed_helper.create_success_embed(
+            title=":bar_chart: グラフの生成完了",
+            description=f"{interaction.user.mention} グラフの生成が完了しました！\n(集計バケット数: {len(data):,}件)",
+            binary_data=image_bytes,
+            filename=f"graph_{graph_type}.png",
         )
+        await interaction.followup.send(embed=embed)
 
     # =========================================================
     # サブコマンド群

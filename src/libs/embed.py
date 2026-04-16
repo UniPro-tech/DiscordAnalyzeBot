@@ -44,10 +44,14 @@ class EmbedHelper:
             color=0x0000FF,
         )
 
-    def create_no_data_error(self) -> discord.Embed:
+    def create_no_data_error(self, is_filtered: bool | None) -> discord.Embed:
+        if not is_filtered or is_filtered is None:
+            message = "指定された条件に当てはまるデータが見つかりませんでした。"
+        else:
+            message = "解析に必要なデータがない、もしくは不足しています。"
         return self.create_error_embed(
             title="データ不足",
-            description="解析に必要なデータがない、もしくは不足しています。\n-# :warning: 会話をしているのに発生する場合、Botからチャンネルが見えていないかもしれません。詳細: [ヘルプページ](https://analyze-bot.uniproject.jp/faq#no_data)",
+            description=f"{message}\n-# :warning: 会話をしているのに発生する場合、Botからチャンネルが見えていないかもしれません。詳細: [ヘルプページ](https://analyze-bot.uniproject.jp/faq#no_data)",
         )
 
     def create_guild_only_error(self) -> discord.Embed:

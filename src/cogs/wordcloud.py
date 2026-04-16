@@ -420,6 +420,7 @@ class WordCloud(commands.Cog):
         frequency: app_commands.Choice[str],
     ):
         guild_id = str(interaction.guild_id)
+        embed_helper = EmbedHelper(function_name="WordCloud Schedule List")
         try:
             # $pull を使って配列から特定の条件に合う要素を削除
             result = await asyncio.to_thread(
@@ -436,18 +437,24 @@ class WordCloud(commands.Cog):
                 },
             )
             if result.modified_count > 0:
-                await interaction.response.send_message(
-                    f"{channel.mention} のスケジュールを削除しました。"
+                embed = embed_helper.create_success_embed(
+                    title="削除成功",
+                    description=f"{channel.mention} のスケジュールを削除しました。",
                 )
+                await interaction.response.send_message(embed=embed)
             else:
-                await interaction.response.send_message(
-                    "該当するスケジュールが見つかりませんでした。", ephemeral=True
+                embed = embed_helper.create_error_embed(
+                    title="削除失敗",
+                    description="該当するスケジュールが見つかりませんでした。",
                 )
+                await interaction.response.send_message(embed=embed, ephemeral=True)
         except Exception as e:
             print(f"Remove Error: {e}")
-            await interaction.response.send_message(
-                "エラーが発生しました。", ephemeral=True
+            embed = embed_helper.create_error_embed(
+                title="削除失敗",
+                description="内部エラーが発生しました。",
             )
+            await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @tasks.loop(minutes=1)
     async def check_scheduled_wordclouds(self):
@@ -531,7 +538,6 @@ class WordCloud(commands.Cog):
 
             now_jst = discord.utils.utcnow().astimezone(self.JST)
 
-            # ====== ここから修正 ======
             start_dt_jst = get_schedule_start_datetime(frequency, now_jst)
             if start_dt_jst is None:
                 print(f"Unknown schedule frequency: {frequency}")
@@ -539,7 +545,6 @@ class WordCloud(commands.Cog):
 
             # DBクエリ用にUTCのdatetimeに変換
             start_dt = start_dt_jst.astimezone(timezone.utc)
-            # ====== ここまで修正 ======
 
             try:
                 docs = await asyncio.to_thread(
@@ -580,7 +585,6 @@ class WordCloud(commands.Cog):
                 )
                 return
 
-            # ====== Embed作成部分も少しリッチに修正 ======
             embed = embed_helper.create_success_embed(
                 title=f"{get_frequency_label(frequency)}ワードクラウド",
                 description=(
@@ -590,7 +594,6 @@ class WordCloud(commands.Cog):
                 binary_data=image_buffer.getvalue(),
                 binary_filename="wordcloud.png",
             )
-            # ====== ここまで ======
 
             await channel.send(
                 embed=embed,
