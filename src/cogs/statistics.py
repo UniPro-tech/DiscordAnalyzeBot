@@ -1,5 +1,6 @@
 import asyncio
 import io
+import concurrent.futures
 from datetime import datetime
 from typing import Optional
 
@@ -27,6 +28,109 @@ def setup_japanese_font():
         print("Warning: Japanese font not found.")
 
 
+def _generate_graph_worker(data: list, graph_type: str) -> Optional[discord.File]:
+    """別プロセスで実行されるグラフ生成ワーカー"""
+    if not data:
+        return None
+
+    plt.style.use("default")
+    setup_japanese_font()
+
+    df = pd.DataFrame(data)
+    df["timestamp"] = pd.to_datetime(df["timestamp"])
+
+    # タイムゾーンがある場合は日本時間に変換してから除去
+    if df["timestamp"].dt.tz is not None:
+        df["timestamp"] = (
+            df["timestamp"].dt.tz_convert("Asia/Tokyo").dt.tz_localize(None)
+        )
+
+    plt.style.use("default")
+    setup_japanese_font()
+    fig, ax = plt.subplots(figsize=(8, 5))
+    buf = io.BytesIO()
+
+    try:
+        if graph_type == "posts":
+            # 1. 投稿数の折れ線グラフ (月別)
+            monthly_posts = df.resample("ME", on="timestamp").size()
+            monthly_posts.index = monthly_posts.index.strftime("%Y-%m")
+
+            # kind="line" に変更し、markerを追加
+            monthly_posts.plot(kind="line", marker="o", color="tab:blue", linewidth=2)
+
+            plt.title("月別投稿数の推移")
+            plt.xlabel("年月")
+            plt.ylabel("投稿数")
+            plt.xticks(rotation=45)
+            plt.grid(True, linestyle="--", alpha=0.7)  # 値を読み取りやすくするグリッド
+
+        elif graph_type == "users":
+            # 2. 投稿者数の折れ線グラフ (月別ユニークユーザー数)
+            monthly_users = df.resample("ME", on="timestamp")["user_id"].nunique()
+            monthly_users.index = monthly_users.index.strftime("%Y-%m")
+
+            # kind="line" に変更し、markerを追加
+            monthly_users.plot(kind="line", marker="o", color="tab:green", linewidth=2)
+
+            plt.title("月別アクティブユーザー数（投稿者数）の推移")
+            plt.xlabel("年月")
+            plt.ylabel("ユーザー数")
+            plt.xticks(rotation=45)
+            plt.grid(True, linestyle="--", alpha=0.7)
+
+        elif graph_type == "channels":
+            # 3. 投稿チャンネルの円グラフ
+            fig.set_size_inches(7, 7)  # 円グラフ用にサイズ上書き
+            channel_counts = df["channel_name"].value_counts()
+            if len(channel_counts) > 10:
+                top_10 = channel_counts[:10]
+                others = pd.Series([channel_counts[10:].sum()], index=["その他"])
+                channel_counts = pd.concat([top_10, others])
+            channel_counts.plot(
+                kind="pie",
+                autopct="%1.1f%%",
+                startangle=90,
+                cmap="Pastel1",
+                ax=ax,
+            )
+            ax.set_title("投稿チャンネルの割合")
+            ax.set_ylabel("")
+
+        elif graph_type == "moving_avg":
+            # 4. 年での移動平均 (日別投稿数の365日移動平均)
+            fig.set_size_inches(10, 5)  # 横長に上書き
+            daily_posts = df.resample("D", on="timestamp").size()
+            yearly_moving_avg = daily_posts.rolling(window=365, min_periods=1).mean()
+            plt.plot(
+                daily_posts.index,
+                daily_posts.values,
+                label="日別投稿数",
+                color="lightgray",
+                alpha=0.5,
+            )
+            plt.plot(
+                yearly_moving_avg.index,
+                yearly_moving_avg.values,
+                label="1年(365日)移動平均",
+                color="red",
+                linewidth=2,
+            )
+            plt.title("投稿数の推移と年(365日)移動平均")
+            plt.xlabel("年月日")
+            plt.ylabel("投稿数")
+            plt.legend()
+            plt.grid(True, linestyle="--", alpha=0.7)
+
+        fig.tight_layout()
+        fig.savefig(buf, format="png")
+        buf.seek(0)
+        return buf.getvalue()
+
+    finally:
+        plt.close()  # メモリリーク防止
+
+
 class Statistics(commands.Cog):
     graphs_group = app_commands.Group(
         name="graphs",
@@ -35,6 +139,11 @@ class Statistics(commands.Cog):
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+        self.process_pool = concurrent.futures.ProcessPoolExecutor(max_workers=2)
+
+    def cog_unload(self):
+        # Cogアンロード時にプールを安全に閉じる
+        self.process_pool.shutdown(wait=False)
 
     def _build_query(
         self,
@@ -61,117 +170,6 @@ class Statistics(commands.Cog):
             query["channel_id"] = channel_id
 
         return query
-
-    def _generate_single_graph(
-        self, data: list, graph_type: str
-    ) -> Optional[discord.File]:
-        """
-        別スレッドで実行される単一グラフ生成関数
-        """
-        if not data:
-            return None
-
-        df = pd.DataFrame(data)
-        df["timestamp"] = pd.to_datetime(df["timestamp"])
-
-        # タイムゾーンがある場合は日本時間に変換してから除去
-        if df["timestamp"].dt.tz is not None:
-            df["timestamp"] = (
-                df["timestamp"].dt.tz_convert("Asia/Tokyo").dt.tz_localize(None)
-            )
-
-        plt.style.use("default")
-        setup_japanese_font()
-        fig, ax = plt.subplots(figsize=(8, 5))
-        buf = io.BytesIO()
-
-        try:
-            if graph_type == "posts":
-                # 1. 投稿数の折れ線グラフ (月別)
-                monthly_posts = df.resample("ME", on="timestamp").size()
-                monthly_posts.index = monthly_posts.index.strftime("%Y-%m")
-
-                # kind="line" に変更し、markerを追加
-                monthly_posts.plot(
-                    kind="line", marker="o", color="tab:blue", linewidth=2
-                )
-
-                plt.title("月別投稿数の推移")
-                plt.xlabel("年月")
-                plt.ylabel("投稿数")
-                plt.xticks(rotation=45)
-                plt.grid(
-                    True, linestyle="--", alpha=0.7
-                )  # 値を読み取りやすくするグリッド
-
-            elif graph_type == "users":
-                # 2. 投稿者数の折れ線グラフ (月別ユニークユーザー数)
-                monthly_users = df.resample("ME", on="timestamp")["user_id"].nunique()
-                monthly_users.index = monthly_users.index.strftime("%Y-%m")
-
-                # kind="line" に変更し、markerを追加
-                monthly_users.plot(
-                    kind="line", marker="o", color="tab:green", linewidth=2
-                )
-
-                plt.title("月別アクティブユーザー数（投稿者数）の推移")
-                plt.xlabel("年月")
-                plt.ylabel("ユーザー数")
-                plt.xticks(rotation=45)
-                plt.grid(True, linestyle="--", alpha=0.7)
-
-            elif graph_type == "channels":
-                # 3. 投稿チャンネルの円グラフ
-                fig.set_size_inches(7, 7)  # 円グラフ用にサイズ上書き
-                channel_counts = df["channel_name"].value_counts()
-                if len(channel_counts) > 10:
-                    top_10 = channel_counts[:10]
-                    others = pd.Series([channel_counts[10:].sum()], index=["その他"])
-                    channel_counts = pd.concat([top_10, others])
-                channel_counts.plot(
-                    kind="pie",
-                    autopct="%1.1f%%",
-                    startangle=90,
-                    cmap="Pastel1",
-                    ax=ax,
-                )
-                ax.set_title("投稿チャンネルの割合")
-                ax.set_ylabel("")
-
-            elif graph_type == "moving_avg":
-                # 4. 年での移動平均 (日別投稿数の365日移動平均)
-                fig.set_size_inches(10, 5)  # 横長に上書き
-                daily_posts = df.resample("D", on="timestamp").size()
-                yearly_moving_avg = daily_posts.rolling(
-                    window=365, min_periods=1
-                ).mean()
-                plt.plot(
-                    daily_posts.index,
-                    daily_posts.values,
-                    label="日別投稿数",
-                    color="lightgray",
-                    alpha=0.5,
-                )
-                plt.plot(
-                    yearly_moving_avg.index,
-                    yearly_moving_avg.values,
-                    label="1年(365日)移動平均",
-                    color="red",
-                    linewidth=2,
-                )
-                plt.title("投稿数の推移と年(365日)移動平均")
-                plt.xlabel("年月日")
-                plt.ylabel("投稿数")
-                plt.legend()
-                plt.grid(True, linestyle="--", alpha=0.7)
-
-            fig.tight_layout()
-            fig.savefig(buf, format="png")
-            buf.seek(0)
-            return discord.File(buf, filename=f"graph_{graph_type}.png")
-
-        finally:
-            plt.close()  # メモリリーク防止
 
     async def _handle_graph_request(
         self,
@@ -235,18 +233,20 @@ class Statistics(commands.Cog):
 
         # グラフ生成
         try:
-            file = await asyncio.to_thread(
-                self._generate_single_graph, data, graph_type
+            loop = asyncio.get_running_loop()
+            image_bytes = await loop.run_in_executor(
+                self.process_pool, _generate_graph_worker, data, graph_type
             )
         except Exception as e:
             print(f"Graph generation error in graphs: {e}")
             await interaction.followup.send("グラフの生成中にエラーが発生しました。")
             return
 
-        if not file:
+        if not image_bytes:
             await interaction.followup.send("グラフの生成に失敗しました。")
             return
 
+        file = discord.File(io.BytesIO(image_bytes), filename=f"graph_{graph_type}.png")
         await interaction.followup.send(
             content=f":bar_chart: {interaction.user.mention} グラフの生成が完了しました！\n(対象データ: {len(data):,}件)",
             file=file,
