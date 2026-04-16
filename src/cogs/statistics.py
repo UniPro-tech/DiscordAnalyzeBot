@@ -35,6 +35,7 @@ def _generate_graph_worker(data: list, graph_type: str) -> Optional[bytes]:
 
     # 1. データの準備
     df = pd.DataFrame(data)
+
     # 集約データの形式に応じてDataFrameを整形
     if graph_type == "channels":
         # {"_id": "channel_name", "count": N} 形式
@@ -56,6 +57,7 @@ def _generate_graph_worker(data: list, graph_type: str) -> Optional[bytes]:
         if graph_type == "posts":
             # 1. 投稿数の折れ線グラフ (月別)
             df.index = df.index.strftime("%Y-%m")
+            # 修正: MongoDBですでに集計されているので "count" カラムをそのまま使う
             monthly_posts = df["count"]
 
             monthly_posts.plot(
@@ -70,8 +72,9 @@ def _generate_graph_worker(data: list, graph_type: str) -> Optional[bytes]:
 
         elif graph_type == "users":
             # 2. 投稿者数の折れ線グラフ (月別ユニークユーザー数)
-            monthly_users = df.resample("ME", on="timestamp")["user_id"].nunique()
-            monthly_users.index = monthly_users.index.strftime("%Y-%m")
+            # 修正: MongoDB側で月別＆ユニークユーザー数が計算済み ("count" に格納されている)
+            df.index = df.index.strftime("%Y-%m")
+            monthly_users = df["count"]
 
             monthly_users.plot(
                 kind="line", marker="o", color="tab:green", linewidth=2, ax=ax
@@ -86,10 +89,13 @@ def _generate_graph_worker(data: list, graph_type: str) -> Optional[bytes]:
         elif graph_type == "channels":
             # 3. 投稿チャンネルの円グラフ
             fig.set_size_inches(7, 7)
-            channel_counts = df["channel_name"].value_counts()
+
+            # 修正: すでに集計済みなので value_counts() ではなく count 列を使う
+            channel_counts = df.set_index("channel_name")["count"]
+
             if len(channel_counts) > 10:
-                top_10 = channel_counts[:10]
-                others = pd.Series([channel_counts[10:].sum()], index=["その他"])
+                top_10 = channel_counts.iloc[:10]
+                others = pd.Series([channel_counts.iloc[10:].sum()], index=["その他"])
                 channel_counts = pd.concat([top_10, others])
 
             channel_counts.plot(
@@ -105,7 +111,9 @@ def _generate_graph_worker(data: list, graph_type: str) -> Optional[bytes]:
         elif graph_type == "moving_avg":
             # 4. 年での移動平均 (日別投稿数の365日移動平均)
             fig.set_size_inches(10, 5)
-            daily_posts = df.resample("D", on="timestamp").size()
+
+            # 修正: すでに日別カウント済みだが、投稿が0日の欠損日付を埋めるためにリサンプリング
+            daily_posts = df["count"].resample("D").sum().fillna(0)
             yearly_moving_avg = daily_posts.rolling(window=365, min_periods=1).mean()
 
             ax.plot(
@@ -130,11 +138,9 @@ def _generate_graph_worker(data: list, graph_type: str) -> Optional[bytes]:
 
         fig.tight_layout()
         fig.savefig(buf, format="png")
-        # buf.seek(0) は getvalue() の場合は不要ですが残しても無害です
         return buf.getvalue()
 
     finally:
-        # メモリリーク防止 (ProcessPool使用時はプロセス終了で解放されますが、安全のための明記は良い習慣です)
         plt.close(fig)
 
 
