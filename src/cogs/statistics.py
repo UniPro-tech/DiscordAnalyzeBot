@@ -92,9 +92,19 @@ def _generate_graph_worker(data: list, graph_type: str) -> Optional[bytes]:
         elif graph_type == "channels":
             fig.set_size_inches(7, 7)
 
-            # channel_name をインデックスにして、countを値にする
-            # IDで集約されているので、名前は一意に紐付いている状態
-            channel_counts = df.set_index("channel_name")["count"]
+            # channel_id でインデックスを作成し、名前でラベル付け
+            channel_counts = df.set_index("_id")["count"]
+            channel_counts.index = df.set_index("_id")["channel_name"]
+            # 重複する名前がある場合は channel_id を付与して区別
+            if channel_counts.index.duplicated().any():
+                channel_counts.index = [
+                    f"{name} ({id_})" if dup else name
+                    for name, id_, dup in zip(
+                        df["channel_name"],
+                        df["_id"],
+                        df["channel_name"].duplicated(keep=False),
+                    )
+                ]
 
             if len(channel_counts) > 10:
                 top_10 = channel_counts.iloc[:10]
@@ -159,7 +169,7 @@ class Statistics(commands.Cog):
 
     def cog_unload(self):
         # Cogアンロード時にプールを安全に閉じる
-        self.process_pool.shutdown(wait=False)
+        self.process_pool.shutdown(wait=True, cancel_futures=True)
 
     def _build_query(
         self,
