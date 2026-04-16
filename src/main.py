@@ -54,13 +54,6 @@ def setup_db():
     )
     bot.db.messages.create_index("reply_to", name="reply_to_idx")
 
-    # 過去データ用
-    bot.db.messages.create_index(
-        "timestamp",
-        expireAfterSeconds=31 * 24 * 60 * 60,
-        name="timestamp_ttl_normal",
-        partialFilterExpression={"is_premium": {"$exists": False}},
-    )
     # expires_atで消す
     bot.db.messages.create_index(
         "expires_at",
@@ -456,9 +449,60 @@ def migrate_to_new_settings_structure():
     client.close()
 
 
+def migrate_add_expires_at():
+    """
+    expires_at フィールドがないドキュメントに対し、
+    timestamp + 31日 を計算してセットするマイグレーション
+    """
+    if not DB_DSN:
+        print("Error: Mongo DB_DSN is not set")
+        return
+
+    client_db = MongoClient(DB_DSN)
+    db = client_db["discord_analyzer"]
+
+    print("Starting migration: Adding expires_at to old documents...")
+
+    # 1. expires_at が存在しないドキュメントを対象にする
+    # 2. $addFields で timestamp (Date型) に 31日分 (31 * 24 * 60 * 60 * 1000 ミリ秒) を加算
+    update_pipeline = [
+        {
+            "$match": {
+                "expires_at": {"$exists": False},
+                "timestamp": {"$type": "date"},  # 既にDate型変換済みであることが前提
+            }
+        },
+        {"$set": {"expires_at": {"$add": ["$timestamp", 31 * 24 * 60 * 60 * 1000]}}},
+    ]
+
+    try:
+        # 集計パイプラインを使用して一括更新
+        # 注意: MongoDB 4.2+ が必要です
+        result = db.messages.update_many(
+            {"expires_at": {"$exists": False}, "timestamp": {"$type": "date"}},
+            [
+                {
+                    "$set": {
+                        "expires_at": {"$add": ["$timestamp", 31 * 24 * 60 * 60 * 1000]}
+                    }
+                }
+            ],
+        )
+
+        print(f"Matched: {result.matched_count}, Updated: {result.modified_count}")
+        print("Migration for expires_at Successfully")
+
+    except Exception as e:
+        print(f"Migration failed: {e}")
+        raise
+    finally:
+        client_db.close()
+
+
 if __name__ == "__main__":
     if os.getenv("RUN_TIMESTAMP_MIGRATION") == "1":
         migrate_timestamps_to_date()
         delete_all_index()
         migrate_to_new_settings_structure()
+        migrate_add_expires_at()
     asyncio.run(main())
