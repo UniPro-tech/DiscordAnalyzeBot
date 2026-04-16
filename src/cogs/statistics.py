@@ -209,12 +209,66 @@ class Statistics(commands.Cog):
         query = self._build_query(guild_id, start_dt, end_dt, user_id, channel_id)
 
         def fetch_data():
-            cursor = self.bot.db.messages.find(
-                query, {"_id": 0, "user_id": 1, "channel_name": 1, "timestamp": 1}
-            )
+            # 1. ベースとなる検索条件
+            pipeline = [{"$match": query}]
+
+            # 2. グラフの種類に応じた集計パイプラインの追加
+            if graph_type == "channels":
+                pipeline.extend(
+                    [
+                        {"$group": {"_id": "$channel_name", "count": {"$sum": 1}}},
+                        {"$sort": {"count": -1}},
+                    ]
+                )
+            elif graph_type == "users":
+                # ユーザー数は「月とユーザーIDでグループ化」してから「月ごとの数をカウント」
+                pipeline.extend(
+                    [
+                        {
+                            "$group": {
+                                "_id": {
+                                    "date": {
+                                        "$dateToString": {
+                                            "format": "%Y-%m",
+                                            "date": "$timestamp",
+                                            "timezone": "Asia/Tokyo",
+                                        }
+                                    },
+                                    "user_id": "$user_id",
+                                }
+                            }
+                        },
+                        {"$group": {"_id": "$_id.date", "count": {"$sum": 1}}},
+                        {"$sort": {"_id": 1}},
+                    ]
+                )
+            else:
+                # posts(月別) と moving_avg(日別) の投稿数カウント
+                format_str = "%Y-%m-%d" if graph_type == "moving_avg" else "%Y-%m"
+                pipeline.extend(
+                    [
+                        {
+                            "$group": {
+                                "_id": {
+                                    "$dateToString": {
+                                        "format": format_str,
+                                        "date": "$timestamp",
+                                        "timezone": "Asia/Tokyo",
+                                    }
+                                },
+                                "count": {"$sum": 1},
+                            }
+                        },
+                        {"$sort": {"_id": 1}},
+                    ]
+                )
+
+            # allowDiskUse=True を指定して大規模集計時のメモリ制限を回避
+            cursor = self.bot.db.messages.aggregate(pipeline, allowDiskUse=True)
             return list(cursor)
 
         try:
+            # 取得されるデータは [{"_id": "2023-10", "count": 150}, ...] のような軽量なリストになる
             data = await asyncio.to_thread(fetch_data)
         except Exception as e:
             print(f"Database error in graphs: {e}")
