@@ -171,7 +171,9 @@ async def on_message(message: discord.Message):
         "attachments": [a.url for a in message.attachments],
         "length": len(message.content),
         "emoji_count": len(emojis),
-        "url_count": max(0, len(message.content.split("http")) - 1),  # 分割数から調整
+        "url_count": len(
+            re.findall(r"https?://\S+", message.content)
+        ),  # 分割数から調整
     }
 
     # トークン化とDB保存
@@ -382,29 +384,55 @@ def migrate_to_new_settings_structure():
         )
     print("Migrated channel opt-outs to guild_settings.optout_channels")
 
-    # 2. 既存の guild_settings (古い形式) を schedules 形式にリネーム/整理
-    # 既存のドキュメントに frequency がある場合、それを schedules 配列に入れる等の処理
+    # 2. 既存の古い guild_settings レコードを 1 つの guild_id ドキュメントに集約
+    # frequency フィールドを持つ古い形式のドキュメントを抽出
     cursor = db.guild_settings.find({"frequency": {"$exists": True}})
+
+    # 処理済みの _id を追跡（削除用）
+    processed_ids = []
+
     for doc in cursor:
+        guild_id = doc.get("guild_id")
+        if not guild_id:
+            continue
+
         schedule_item = {
             "channel_id": doc.get("channel_id"),
             "frequency": doc.get("frequency"),
             "enabled": doc.get("enabled", True),
+            "type": "wordcloud",
         }
+
+        # guild_id をキーにして upsert。schedules 配列にアイテムを追加し、不要なフィールドを unset
         db.guild_settings.update_one(
-            {"_id": doc["_id"]},
+            {"guild_id": guild_id},
             {
-                "$push": {"schedules": schedule_item},
-                "$set": {"updated_at": doc.get("timestamp")},
-                "$unset": {"channel_id": "", "frequency": "", "enabled": ""},
+                "$addToSet": {"schedules": schedule_item},
+                "$set": {"updated_at": doc.get("timestamp") or discord.utils.utcnow()},
             },
+            upsert=True,
         )
-    print("Migrated old guild_settings to schedules format")
+        processed_ids.append(doc["_id"])
 
-    # 3. インデックスの再設定 (setup_dbの内容も書き換える必要あり)
+    # 全てのデータを統合した後、古い「個別のレコード」を特定して削除
+    # ただし、集約先のドキュメント自体も processed_ids に含まれている可能性があるため
+    # 「集約後（schedulesが存在する）かつ 古いフィールド（frequency）が残っている」ものを消すか
+    # 単純に frequency フィールドを持つ古い形式を全て unset/整理する
+
+    # 集約が完了したので、古い個別ドキュメントの残骸を一掃（重複排除）
+    # frequency フィールドを持つドキュメントを一括でクリーンアップ、または削除
+    db.guild_settings.delete_many(
+        {"_id": {"$in": processed_ids}, "frequency": {"$exists": True}}
+    )
+
+    print("Migrated and consolidated old guild_settings to unified schedules format")
+
+    # 3. インデックスの再設定
+    print("Re-creating indexes...")
     db.guild_settings.drop_indexes()
-    db.guild_settings.create_index("guild_id", unique=True)
+    db.guild_settings.create_index("guild_id", unique=True, name="guild_id_unique")
 
+    print("Migration Successfully")
     client.close()
 
 

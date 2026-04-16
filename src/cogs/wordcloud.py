@@ -345,16 +345,18 @@ class WordCloud(commands.Cog):
 
         try:
             settings = await asyncio.to_thread(
-                lambda: list(
-                    self.bot.db.guild_settings.find(
-                        {
-                            "guild_id": str(interaction.guild_id),
-                        }
-                    )
-                )
+                self.bot.db.guild_settings.find_one,
+                {"guild_id": str(interaction.guild_id)},
+                {"schedules": 1},
             )
 
-            if not settings:
+            schedules = [
+                s
+                for s in (settings or {}).get("schedules", [])
+                if s.get("type") == "wordcloud"
+            ]
+
+            if not schedules:
                 embed = embed_helper.create_warning_embed(
                     title="スケジュールなし",
                     description="このサーバーではワードクラウドのスケジュールが設定されていません。",
@@ -369,7 +371,7 @@ class WordCloud(commands.Cog):
             }
             description_lines = []
 
-            for idx, setting in enumerate(settings, 1):
+            for idx, setting in enumerate(schedules, 1):
                 channel = self.bot.get_channel(int(setting["channel_id"]))
                 channel_mention = (
                     channel.mention if channel else f"<#{setting['channel_id']}>"
