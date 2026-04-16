@@ -5,8 +5,12 @@ from datetime import datetime
 from typing import Optional
 
 import discord
-import pandas as pd
+import matplotlib
+
+matplotlib.use("Agg")
+
 import matplotlib.pyplot as plt
+import pandas as pd
 from discord import app_commands
 from discord.ext import commands
 import matplotlib.font_manager as fm
@@ -38,8 +42,7 @@ def _generate_graph_worker(data: list, graph_type: str) -> Optional[bytes]:
 
     # 集約データの形式に応じてDataFrameを整形
     if graph_type == "channels":
-        # {"_id": "channel_name", "count": N} 形式
-        df = df.rename(columns={"_id": "channel_name"})
+        pass
     else:
         # {"_id": "2023-10", "count": N} または {"_id": "2023-10-01", "count": N} 形式
         df = df.rename(columns={"_id": "date"})
@@ -87,10 +90,10 @@ def _generate_graph_worker(data: list, graph_type: str) -> Optional[bytes]:
             ax.grid(True, linestyle="--", alpha=0.7)
 
         elif graph_type == "channels":
-            # 3. 投稿チャンネルの円グラフ
             fig.set_size_inches(7, 7)
 
-            # 修正: すでに集計済みなので value_counts() ではなく count 列を使う
+            # channel_name をインデックスにして、countを値にする
+            # IDで集約されているので、名前は一意に紐付いている状態
             channel_counts = df.set_index("channel_name")["count"]
 
             if len(channel_counts) > 10:
@@ -231,7 +234,15 @@ class Statistics(commands.Cog):
             if graph_type == "channels":
                 pipeline.extend(
                     [
-                        {"$group": {"_id": "$channel_name", "count": {"$sum": 1}}},
+                        {
+                            "$group": {
+                                "_id": "$channel_id",  # IDをキーにする
+                                "count": {"$sum": 1},
+                                "channel_name": {
+                                    "$first": "$channel_name"
+                                },  # 表示用に名前を保持
+                            }
+                        },
                         {"$sort": {"count": -1}},
                     ]
                 )
@@ -315,7 +326,7 @@ class Statistics(commands.Cog):
 
         file = discord.File(io.BytesIO(image_bytes), filename=f"graph_{graph_type}.png")
         await interaction.followup.send(
-            content=f":bar_chart: {interaction.user.mention} グラフの生成が完了しました！\n(対象データ: {len(data):,}件)",
+            content=f":bar_chart: {interaction.user.mention} グラフの生成が完了しました！\n(集計バケット数: {len(data):,}件)",
             file=file,
         )
 
