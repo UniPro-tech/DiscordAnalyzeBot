@@ -170,13 +170,23 @@ class Optout(commands.Cog):
             await interaction.response.send_message(embed=embed, ephemeral=True)
             return
 
+        # チャンネルオプトアウトの部分的な修正
         try:
-            await asyncio.to_thread(
-                self.bot.db.channel_settings.update_one,
-                {"guild_id": guild_id, "channel_id": channel_id},
-                {"$set": {"opt_out": opt_out_value}},
-                upsert=True,
-            )
+            if opt_out_value:
+                # 配列に追加 (重複なし)
+                await asyncio.to_thread(
+                    self.bot.db.guild_settings.update_one,
+                    {"guild_id": guild_id},
+                    {"$addToSet": {"optout_channels": channel_id}},
+                    upsert=True,
+                )
+            else:
+                # 配列から削除
+                await asyncio.to_thread(
+                    self.bot.db.guild_settings.update_one,
+                    {"guild_id": guild_id},
+                    {"$pull": {"optout_channels": channel_id}},
+                )
         except Exception as e:
             print(f"Error in optout channel command: {e}")
             embed = embed_helper.create_error_embed(
