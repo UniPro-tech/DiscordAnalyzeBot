@@ -31,18 +31,28 @@ def is_user_opted_out(db, user_id: str) -> bool:
     return opt_out.get("opt_out", False)
 
 
-def get_opt_out_flags(
-    db,
-    guild_id: str,
-    channel_id: str,
-    user_id: str,
-    parent_channel_id: str | None = None,
-) -> tuple[bool, bool]:
-    """オプトアウトフラグをまとめて取得するユーティリティ関数。DBアクセスが伴うため、必要に応じて非同期で呼び出すこと。"""
-    return (
-        is_channel_opted_out(db, guild_id, channel_id, parent_channel_id),
-        is_user_opted_out(db, user_id),
+def get_opt_out_flags(db, guild_id, channel_id, user_id, parent_channel_id=None):
+    # ユーザー設定: opt_out フィールドのみ取得
+    user_settings = db.user_settings.find_one({"user_id": user_id}, {"opt_out": 1})
+    # user_settings が None でなく、かつ opt_out が True の場合のみ True
+    user_opted_out = bool(user_settings and user_settings.get("opt_out"))
+
+    # ギルド設定: optout_channels フィールドのみ取得
+    guild_settings = db.guild_settings.find_one(
+        {"guild_id": guild_id}, {"optout_channels": 1}
     )
+
+    channel_opted_out = False
+    if guild_settings:
+        # 配列が存在しない可能性も考慮して get([], ...)
+        optout_list = guild_settings.get("optout_channels", [])
+
+        # チャンネルID または 親チャンネルID (Forumの親など) が配列に含まれているか
+        channel_opted_out = (channel_id in optout_list) or (
+            parent_channel_id is not None and parent_channel_id in optout_list
+        )
+
+    return channel_opted_out, user_opted_out
 
 
 def get_guild_collection_stats(

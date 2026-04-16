@@ -58,18 +58,11 @@ def setup_db():
         "timestamp", expireAfterSeconds=31 * 24 * 60 * 60, name="timestamp_ttl"
     )
 
-    # Guild設定のインデックス設定
-    bot.db.guild_settings.create_index(
-        [("guild_id", 1), ("channel_id", 1), ("frequency", 1)],
-        unique=True,
-        name="guild_settings_unique",
-    )
-    bot.db.guild_settings.create_index("guild_id", name="guild_id_idx")
-    bot.db.guild_settings.create_index("enabled", name="enabled_idx")
+    # Guild設定: guild_idごとに1ドキュメント
+    bot.db.guild_settings.create_index("guild_id", unique=True, name="guild_id_unique")
 
-    # ユーザー設定コレクションのインデックス設定
+    # ユーザー設定
     bot.db.user_settings.create_index("user_id", unique=True, name="user_id_unique")
-    bot.db.user_settings.create_index("opt_out", name="opt_out_idx")
 
     # チャンネル設定コレクションのインデックス設定
     bot.db.channel_settings.create_index(
@@ -122,25 +115,22 @@ async def before_rotate_status():
 
 
 @bot.event
-async def on_message(message):
-    if message.author.bot:
-        return
-
-    if message.guild is None:
+async def on_message(message: discord.Message):
+    # Bot自身やDMは無視
+    if message.author.bot or message.guild is None:
         return
 
     guild_id = str(message.guild.id)
     channel_id = str(message.channel.id)
-    parent_channel_id = None
-
-    if isinstance(message.channel, discord.Thread) and isinstance(
-        message.channel.parent,
-        discord.ForumChannel,
-    ):
-        parent_channel_id = str(message.channel.parent.id)
-
     user_id = str(message.author.id)
 
+    # スレッドの場合は親チャンネルIDを取得（Forum以外もカバー）
+    parent_channel_id = None
+    if isinstance(message.channel, discord.Thread):
+        parent_channel_id = str(message.channel.parent_id)
+
+    # オプトアウト状況の確認
+    # (内部で guild_settings.optout_channels を参照する前提)
     def collect_opt_out_flags() -> tuple[bool, bool]:
         return get_opt_out_flags(
             bot.db,
@@ -152,20 +142,15 @@ async def on_message(message):
 
     channel_opted_out, user_opted_out = await asyncio.to_thread(collect_opt_out_flags)
 
-    if channel_opted_out:
+    # いずれかがオプトアウトなら処理終了
+    if channel_opted_out or user_opted_out:
         return
 
-    if user_opted_out:
-        return
-
-    roles = message.author.roles
-
-    reply_to = None
-    if message.reference:
-        reply_to = str(message.reference.message_id)
-
+    # メッセージデータの構築
     emoji_pattern = r"<a?:\w+:\d+>"
     emojis = re.findall(emoji_pattern, message.content)
+
+    reply_to = str(message.reference.message_id) if message.reference else None
 
     data = {
         "message_id": str(message.id),
@@ -178,23 +163,28 @@ async def on_message(message):
         "channel_name": str(message.channel),
         "content": message.content,
         "timestamp": message.created_at,
-        "role_ids": [str(role.id) for role in roles] if roles else [],
+        "role_ids": [str(role.id) for role in message.author.roles]
+        if hasattr(message.author, "roles")
+        else [],
         "reply_to": reply_to,
         "mentions": [str(user.id) for user in message.mentions],
         "attachments": [a.url for a in message.attachments],
         "length": len(message.content),
         "emoji_count": len(emojis),
-        "url_count": len(message.content.split("http")),
+        "url_count": max(0, len(message.content.split("http")) - 1),  # 分割数から調整
     }
 
+    # トークン化とDB保存
     def _save_message(d: dict) -> None:
         content = d.get("content", "")
         if content:
+            # 形態素解析などはCPU負荷が高いためスレッドプールで実行
             d["tokens"] = list(extract_tokens(normalize_text(content)))
         bot.db.messages.insert_one(d)
 
     await asyncio.to_thread(_save_message, data)
 
+    # コマンドの実行（プレフィックスコマンド用）
     await bot.process_commands(message)
 
 
@@ -373,8 +363,54 @@ def delete_all_index():
         client_db.close()
 
 
+def migrate_to_new_settings_structure():
+    if not DB_DSN:
+        print("Error: Mongo DB_DSN is not set")
+        return
+
+    client = MongoClient(DB_DSN)
+    db = client["discord_analyzer"]
+    print("Starting structural migration...")
+
+    # 1. channel_settings からオプトアウト済みのチャンネルを取得し、guild_settingsへ統合
+    channels = db.channel_settings.find({"opt_out": True})
+    for ch in channels:
+        db.guild_settings.update_one(
+            {"guild_id": ch["guild_id"]},
+            {"$addToSet": {"optout_channels": ch["channel_id"]}},
+            upsert=True,
+        )
+    print("Migrated channel opt-outs to guild_settings.optout_channels")
+
+    # 2. 既存の guild_settings (古い形式) を schedules 形式にリネーム/整理
+    # 既存のドキュメントに frequency がある場合、それを schedules 配列に入れる等の処理
+    cursor = db.guild_settings.find({"frequency": {"$exists": True}})
+    for doc in cursor:
+        schedule_item = {
+            "channel_id": doc.get("channel_id"),
+            "frequency": doc.get("frequency"),
+            "enabled": doc.get("enabled", True),
+        }
+        db.guild_settings.update_one(
+            {"_id": doc["_id"]},
+            {
+                "$push": {"schedules": schedule_item},
+                "$set": {"updated_at": doc.get("timestamp")},
+                "$unset": {"channel_id": "", "frequency": "", "enabled": ""},
+            },
+        )
+    print("Migrated old guild_settings to schedules format")
+
+    # 3. インデックスの再設定 (setup_dbの内容も書き換える必要あり)
+    db.guild_settings.drop_indexes()
+    db.guild_settings.create_index("guild_id", unique=True)
+
+    client.close()
+
+
 if __name__ == "__main__":
     if os.getenv("RUN_TIMESTAMP_MIGRATION") == "1":
         migrate_timestamps_to_date()
         delete_all_index()
+        migrate_to_new_settings_structure()
     asyncio.run(main())

@@ -231,8 +231,6 @@ class WordCloud(commands.Cog):
             embed=embed, file=discord.File(fp=image_buffer, filename="wordcloud.png")
         )
 
-    # ... [schedule, list_schedules, remove_schedule コマンドは変更なしのため省略せずにそのまま維持] ...
-    # (ここでは先ほどのコードのままで問題ありません)
     @wordcloud_group.command(
         name="schedule",
         description="指定されたチャンネルに定期的にワードクラウドを送信するようスケジュールします",
@@ -258,77 +256,68 @@ class WordCloud(commands.Cog):
         time: str = "09:00",
     ):
         embed_helper = EmbedHelper(function_name="WordCloud Schedule")
-
-        if interaction.guild_id is None:
-            embed = embed_helper.create_error_embed(
-                title="エラー",
-                description="このコマンドはサーバー内でご利用ください。",
-            )
-            await interaction.response.send_message(embed=embed, ephemeral=True)
-            return
-
-        if interaction.permissions.manage_channels is False:
-            embed = embed_helper.create_error_embed(
-                title="エラー",
-                description="このコマンドはチャンネル管理権限が必要です。",
-            )
-            await interaction.response.send_message(embed=embed, ephemeral=True)
-            return
+        guild_id = str(interaction.guild_id)
 
         parsed_time = parse_schedule_time(time)
         if parsed_time is None:
-            embed = embed_helper.create_error_embed(
-                title="時刻形式エラー",
-                description="時刻は HH:MM (例: 09:00, 21:30) で指定してね。",
+            await interaction.response.send_message(
+                "時刻形式エラー: HH:MMで指定してください。", ephemeral=True
             )
-            await interaction.response.send_message(embed=embed, ephemeral=True)
             return
 
-        existing = await asyncio.to_thread(
-            self.bot.db.guild_settings.find_one,
-            {
-                "guild_id": str(interaction.guild_id),
-                "channel_id": str(channel.id),
-                "frequency": frequency.value,
-            },
-        )
+        schedule_time_str = f"{parsed_time[0]:02d}:{parsed_time[1]:02d}"
 
-        if existing:
-            embed = embed_helper.create_warning_embed(
-                title="設定済み",
-                description=f"{channel.mention} へのワードクラウド{frequency.name}送信は既に設定されています。",
-            )
-            await interaction.response.send_message(embed=embed, ephemeral=True)
-            return
+        # 新しいデータ構造：schedules配列内のオブジェクト
+        new_schedule = {
+            "channel_id": str(channel.id),
+            "frequency": frequency.value,
+            "schedule_time": schedule_time_str,
+            "enabled": True,
+            "last_executed": None,
+            "type": "wordcloud",  # 統計など他のスケジュールと区別する場合
+        }
 
         try:
-            await asyncio.to_thread(
-                self.bot.db.guild_settings.insert_one,
+            # 同じチャンネルIDと頻度の組み合わせが既にないか確認
+            existing = await asyncio.to_thread(
+                self.bot.db.guild_settings.find_one,
                 {
-                    "guild_id": str(interaction.guild_id),
-                    "channel_id": str(channel.id),
-                    "frequency": frequency.value,
-                    "schedule_time": f"{parsed_time[0]:02d}:{parsed_time[1]:02d}",
-                    "enabled": True,
-                    "last_executed": None,
+                    "guild_id": guild_id,
+                    "schedules": {
+                        "$elemMatch": {
+                            "channel_id": str(channel.id),
+                            "frequency": frequency.value,
+                            "type": "wordcloud",
+                        }
+                    },
                 },
+            )
+
+            if existing:
+                await interaction.response.send_message(
+                    "その設定は既に存在します。", ephemeral=True
+                )
+                return
+
+            # 配列に追加
+            await asyncio.to_thread(
+                self.bot.db.guild_settings.update_one,
+                {"guild_id": guild_id},
+                {"$addToSet": {"schedules": new_schedule}},
+                upsert=True,
             )
 
             embed = embed_helper.create_success_embed(
                 title="スケジュール設定完了",
-                description=(
-                    f"{channel.mention} へのワードクラウド{frequency.name}送信を設定したよ！\n"
-                    f"送信時刻: {parsed_time[0]:02d}:{parsed_time[1]:02d} (JST)"
-                ),
+                description=f"{channel.mention} への{frequency.name}送信を設定しました。\n時刻: {schedule_time_str} (JST)",
             )
             await interaction.response.send_message(embed=embed)
+
         except Exception as e:
-            embed = embed_helper.create_error_embed(
-                title="エラー",
-                description="スケジュール設定中にエラーが発生しました。",
+            print(f"Error: {e}")
+            await interaction.response.send_message(
+                "設定中にエラーが発生しました。", ephemeral=True
             )
-            await interaction.response.send_message(embed=embed, ephemeral=True)
-            print(f"Error scheduling wordcloud: {e}")
 
     @wordcloud_group.command(
         name="list",
@@ -437,85 +426,94 @@ class WordCloud(commands.Cog):
         channel: discord.TextChannel,
         frequency: app_commands.Choice[str],
     ):
-        embed_helper = EmbedHelper(function_name="WordCloud Schedule Remove")
-
-        if interaction.guild_id is None:
-            embed = embed_helper.create_error_embed(
-                title="エラー",
-                description="このコマンドはサーバー内でご利用ください。",
-            )
-            await interaction.response.send_message(embed=embed, ephemeral=True)
-            return
-
-        if interaction.permissions.manage_channels is False:
-            embed = embed_helper.create_error_embed(
-                title="エラー",
-                description="このコマンドはチャンネル管理権限が必要です。",
-            )
-            await interaction.response.send_message(embed=embed, ephemeral=True)
-            return
-
+        guild_id = str(interaction.guild_id)
         try:
+            # $pull を使って配列から特定の条件に合う要素を削除
             result = await asyncio.to_thread(
-                self.bot.db.guild_settings.delete_one,
+                self.bot.db.guild_settings.update_one,
+                {"guild_id": guild_id},
                 {
-                    "guild_id": str(interaction.guild_id),
-                    "channel_id": str(channel.id),
-                    "frequency": frequency.value,
+                    "$pull": {
+                        "schedules": {
+                            "channel_id": str(channel.id),
+                            "frequency": frequency.value,
+                            "type": "wordcloud",
+                        }
+                    }
                 },
             )
-
-            if result.deleted_count == 0:
-                embed = embed_helper.create_warning_embed(
-                    title="スケジュールなし",
-                    description=f"{channel.mention} への{frequency.name}スケジュールが見つかりませんでした。",
+            if result.modified_count > 0:
+                await interaction.response.send_message(
+                    f"{channel.mention} のスケジュールを削除しました。"
                 )
-                await interaction.response.send_message(embed=embed, ephemeral=True)
-                return
-
-            embed = embed_helper.create_success_embed(
-                title="削除完了",
-                description=f"{channel.mention} への{frequency.name}スケジュールを削除しました！",
-            )
-            await interaction.response.send_message(embed=embed)
-
+            else:
+                await interaction.response.send_message(
+                    "該当するスケジュールが見つかりませんでした。", ephemeral=True
+                )
         except Exception as e:
-            embed = embed_helper.create_error_embed(
-                title="エラー",
-                description="スケジュール削除中にエラーが発生しました。",
+            print(f"Remove Error: {e}")
+            await interaction.response.send_message(
+                "エラーが発生しました。", ephemeral=True
             )
-            await interaction.response.send_message(embed=embed, ephemeral=True)
-            print(f"Error removing schedule: {e}")
 
     @tasks.loop(minutes=1)
     async def check_scheduled_wordclouds(self):
-        """定期的にスケジュールされたワードクラウド生成をチェック"""
+        """定期実行タスクの改修版"""
         now = discord.utils.utcnow().astimezone(self.JST)
 
         try:
-            settings = await asyncio.to_thread(
-                lambda: list(self.bot.db.guild_settings.find({"enabled": True}))
+            # schedules配列を持っているギルドをすべて取得
+            cursor = await asyncio.to_thread(
+                lambda: list(
+                    self.bot.db.guild_settings.find(
+                        {"schedules": {"$exists": True, "$not": {"$size": 0}}}
+                    )
+                )
             )
         except Exception as e:
-            print(f"Error fetching scheduled wordcloud settings: {e}")
+            print(f"Fetch Error: {e}")
             return
 
-        for setting in settings:
-            guild_id = setting.get("guild_id")
-            channel_id = setting.get("channel_id")
-            frequency = setting.get("frequency")
-            schedule_time = setting.get("schedule_time", "09:00")
-            last_executed = setting.get("last_executed")
+        for guild_doc in cursor:
+            guild_id = guild_doc["guild_id"]
+            for schedule in guild_doc.get("schedules", []):
+                # wordcloudタイプかつ有効なもののみ処理
+                if schedule.get("type") != "wordcloud" or not schedule.get("enabled"):
+                    continue
 
-            parsed_time = parse_schedule_time(schedule_time)
-            if parsed_time is None:
-                continue
+                frequency = schedule["frequency"]
+                schedule_time = schedule.get("schedule_time", "09:00")
+                last_executed = schedule.get("last_executed")
 
-            if now.hour != parsed_time[0] or now.minute != parsed_time[1]:
-                continue
+                parsed_time = parse_schedule_time(schedule_time)
+                if (
+                    not parsed_time
+                    or now.hour != parsed_time[0]
+                    or now.minute != parsed_time[1]
+                ):
+                    continue
 
-            if should_execute_schedule(frequency, last_executed, now, self.JST):
-                await self._execute_scheduled_wordcloud(guild_id, channel_id, frequency)
+                if should_execute_schedule(frequency, last_executed, now, self.JST):
+                    # 実行
+                    await self._execute_scheduled_wordcloud(
+                        guild_id, schedule["channel_id"], frequency
+                    )
+
+                    # 実行時刻の更新 (配列内の特定の要素を更新)
+                    await asyncio.to_thread(
+                        self.bot.db.guild_settings.update_one,
+                        {
+                            "guild_id": guild_id,
+                            "schedules": {
+                                "$elemMatch": {
+                                    "channel_id": schedule["channel_id"],
+                                    "frequency": frequency,
+                                    "type": "wordcloud",
+                                }
+                            },
+                        },
+                        {"$set": {"schedules.$.last_executed": now.isoformat()}},
+                    )
 
     @check_scheduled_wordclouds.before_loop
     async def before_check_scheduled_wordclouds(self):
