@@ -41,36 +41,43 @@ status_index = 0
 
 def setup_db():
     # メッセージコレクションのインデックス設定
-    bot.db.messages.create_index("user_id")
-    bot.db.messages.create_index("channel_id")
-    bot.db.messages.create_index("parent_channel_id")
-    bot.db.messages.create_index("guild_id")
+    bot.db.messages.create_index("user_id", name="user_id_idx")
+    bot.db.messages.create_index("channel_id", name="channel_id_idx")
+    bot.db.messages.create_index("parent_channel_id", name="parent_channel_id_idx")
+    bot.db.messages.create_index("guild_id", name="guild_id_idx")
     bot.db.messages.create_index(
         "message_id",
         unique=True,
         partialFilterExpression={"message_id": {"$exists": True}},
+        name="message_id_unique",
     )
-    bot.db.messages.create_index("reply_to")
+    bot.db.messages.create_index("reply_to", name="reply_to_idx")
 
     # TTL Index: 30日後に自動的に削除
-    bot.db.messages.create_index("timestamp", expireAfterSeconds=31 * 24 * 60 * 60)
+    bot.db.messages.create_index(
+        "timestamp", expireAfterSeconds=31 * 24 * 60 * 60, name="timestamp_ttl"
+    )
 
     # Guild設定のインデックス設定
     bot.db.guild_settings.create_index(
-        [("guild_id", 1), ("channel_id", 1), ("frequency", 1)], unique=True
+        [("guild_id", 1), ("channel_id", 1), ("frequency", 1)],
+        unique=True,
+        name="guild_settings_unique",
     )
-    bot.db.guild_settings.create_index("guild_id")
-    bot.db.guild_settings.create_index("enabled")
+    bot.db.guild_settings.create_index("guild_id", name="guild_id_idx")
+    bot.db.guild_settings.create_index("enabled", name="enabled_idx")
 
     # ユーザー設定コレクションのインデックス設定
-    bot.db.user_settings.create_index("user_id", unique=True)
-    bot.db.user_settings.create_index("opt_out")
+    bot.db.user_settings.create_index("user_id", unique=True, name="user_id_unique")
+    bot.db.user_settings.create_index("opt_out", name="opt_out_idx")
 
     # チャンネル設定コレクションのインデックス設定
     bot.db.channel_settings.create_index(
-        [("guild_id", 1), ("channel_id", 1)], unique=True
+        [("guild_id", 1), ("channel_id", 1)],
+        unique=True,
+        name="channel_settings_unique",
     )
-    bot.db.channel_settings.create_index("opt_out")
+    bot.db.channel_settings.create_index("opt_out", name="opt_out_idx")
 
 
 @bot.event
@@ -343,7 +350,30 @@ def migrate_timestamps_to_date():
         client_db.close()
 
 
+def delete_all_index():
+    if not DB_DSN:
+        print("Error: Mongo DB_DSN is not set")
+        return
+
+    client_db = MongoClient(DB_DSN)
+    db = client_db["discord_analyzer"]
+
+    print("Starting delete all indexes...")
+
+    try:
+        for collection_name in bot.db.list_collection_names():
+            db[collection_name].drop_indexes()
+        print("Deletion Successfully")
+
+    except Exception as e:
+        print(f"Migration failed: {e}")
+        raise
+    finally:
+        client_db.close()
+
+
 if __name__ == "__main__":
     if os.getenv("RUN_TIMESTAMP_MIGRATION") == "1":
         migrate_timestamps_to_date()
+        delete_all_index()
     asyncio.run(main())
