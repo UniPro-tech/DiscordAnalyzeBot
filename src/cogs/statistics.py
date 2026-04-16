@@ -82,7 +82,7 @@ class Statistics(commands.Cog):
 
         plt.style.use("default")
         setup_japanese_font()
-        fig = plt.figure(figsize=(8, 5))
+        fig, ax = plt.subplots(figsize=(8, 5))
         buf = io.BytesIO()
 
         try:
@@ -122,17 +122,21 @@ class Statistics(commands.Cog):
 
             elif graph_type == "channels":
                 # 3. 投稿チャンネルの円グラフ
-                plt.figure(figsize=(7, 7))  # 円グラフ用にサイズ上書き
+                fig.set_size_inches(7, 7)  # 円グラフ用にサイズ上書き
                 channel_counts = df["channel_name"].value_counts()
                 if len(channel_counts) > 10:
                     top_10 = channel_counts[:10]
                     others = pd.Series([channel_counts[10:].sum()], index=["その他"])
                     channel_counts = pd.concat([top_10, others])
                 channel_counts.plot(
-                    kind="pie", autopct="%1.1f%%", startangle=90, cmap="Pastel1"
+                    kind="pie",
+                    autopct="%1.1f%%",
+                    startangle=90,
+                    cmap="Pastel1",
+                    ax=ax,
                 )
-                plt.title("投稿チャンネルの割合")
-                plt.ylabel("")
+                ax.set_title("投稿チャンネルの割合")
+                ax.set_ylabel("")
 
             elif graph_type == "moving_avg":
                 # 4. 年での移動平均 (日別投稿数の365日移動平均)
@@ -161,8 +165,8 @@ class Statistics(commands.Cog):
                 plt.legend()
                 plt.grid(True, linestyle="--", alpha=0.7)
 
-            plt.tight_layout()
-            plt.savefig(buf, format="png")
+            fig.tight_layout()
+            fig.savefig(buf, format="png")
             buf.seek(0)
             return discord.File(buf, filename=f"graph_{graph_type}.png")
 
@@ -230,7 +234,14 @@ class Statistics(commands.Cog):
             return
 
         # グラフ生成
-        file = await asyncio.to_thread(self._generate_single_graph, data, graph_type)
+        try:
+            file = await asyncio.to_thread(
+                self._generate_single_graph, data, graph_type
+            )
+        except Exception as e:
+            print(f"Graph generation error in graphs: {e}")
+            await interaction.followup.send("グラフの生成中にエラーが発生しました。")
+            return
 
         if not file:
             await interaction.followup.send("グラフの生成に失敗しました。")
