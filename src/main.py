@@ -54,12 +54,25 @@ def setup_db():
     bot.db.messages.create_index("reply_to", name="reply_to_idx")
 
     # TTL Index: 30日後に自動的に削除
+    # 1. 一般ユーザー用（is_premium が true ではない、または存在しない場合）
     bot.db.messages.create_index(
-        "timestamp", expireAfterSeconds=31 * 24 * 60 * 60, name="timestamp_ttl"
+        "timestamp",
+        expireAfterSeconds=31 * 24 * 60 * 60,
+        name="timestamp_ttl_normal",
+        partialFilterExpression={"is_premium": {"$ne": True}},
+    )
+
+    # 2. Premiumユーザー用
+    bot.db.messages.create_index(
+        "timestamp",
+        expireAfterSeconds=365 * 24 * 60 * 60,
+        name="timestamp_ttl_premium",
+        partialFilterExpression={"is_premium": True},
     )
 
     # Guild設定: guild_idごとに1ドキュメント
     bot.db.guild_settings.create_index("guild_id", unique=True, name="guild_id_unique")
+    bot.db.guild_settings.create_index("is_premium", name="is_premium_idk")
 
     # ユーザー設定
     bot.db.user_settings.create_index("user_id", unique=True, name="user_id_unique")
@@ -140,6 +153,11 @@ async def on_message(message: discord.Message):
             parent_channel_id=parent_channel_id,
         )
 
+    # プレミアム状況の確認
+    is_premium = bot.db.guild_settings.find_one(
+        {"guild_id": guild_id}, {"is_premium": 1}
+    )
+
     channel_opted_out, user_opted_out = await asyncio.to_thread(collect_opt_out_flags)
 
     # いずれかがオプトアウトなら処理終了
@@ -171,9 +189,8 @@ async def on_message(message: discord.Message):
         "attachments": [a.url for a in message.attachments],
         "length": len(message.content),
         "emoji_count": len(emojis),
-        "url_count": len(
-            re.findall(r"https?://\S+", message.content)
-        ),  # 分割数から調整
+        "url_count": len(re.findall(r"https?://\S+", message.content)),
+        "is_premium": is_premium,
     }
 
     # トークン化とDB保存
