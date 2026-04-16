@@ -37,13 +37,11 @@ def _generate_graph_worker(data: list, graph_type: str) -> Optional[discord.File
     setup_japanese_font()
 
     df = pd.DataFrame(data)
-    df["timestamp"] = pd.to_datetime(df["timestamp"])
-
-    # タイムゾーンがある場合は日本時間に変換してから除去
-    if df["timestamp"].dt.tz is not None:
-        df["timestamp"] = (
-            df["timestamp"].dt.tz_convert("Asia/Tokyo").dt.tz_localize(None)
-        )
+    df["timestamp"] = (
+        pd.to_datetime(df["timestamp"], utc=True)
+        .dt.tz_convert("Asia/Tokyo")
+        .dt.tz_localize(None)
+    )
 
     plt.style.use("default")
     setup_japanese_font()
