@@ -40,6 +40,6 @@ spec:
               value: Asia/Tokyo
           envFrom:
             - secretRef:
-              name: hp-secret
+                name: hp-secret
       imagePullSecrets:
         - name: internal-harbor
