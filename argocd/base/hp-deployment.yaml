@@ -38,5 +38,8 @@ spec:
           env:
             - name: TZ
               value: Asia/Tokyo
+          envFrom:
+            - secretRef:
+              name: hp-secret
       imagePullSecrets:
         - name: internal-harbor
