@@ -193,10 +193,7 @@ class WordCloud(commands.Cog):
             return
 
         if not docs:
-            embed = embed_helper.create_warning_embed(
-                title="会話不足",
-                description="解析対象のメッセージがまだないようです。",
-            )
+            embed = embed_helper.create_no_data_error()
             await interaction.followup.send(embed=embed)
             return
 

@@ -43,3 +43,10 @@ class EmbedHelper:
             description=description,
             color=0x0000FF,
         )
+
+    def create_no_data_error(self) -> discord.Embed:
+        return discord.Embed(
+            title=f"データ不足 - {self.function_name}",
+            description="解析に必要なデータがない、もしくは不足しています。\n-# :warning: 会話をしているのに発生する場合、Botからチャンネルが見えていないかもしれません。詳細: [ヘルプページ](https://analyze-bot.uniproject.jp/faq#no_data)",
+            color=0xFF0000,
+        )
