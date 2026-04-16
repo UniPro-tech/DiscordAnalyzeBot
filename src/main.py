@@ -59,7 +59,7 @@ def setup_db():
         "timestamp",
         expireAfterSeconds=31 * 24 * 60 * 60,
         name="timestamp_ttl_normal",
-        partialFilterExpression={"is_premium": {"$$exists:": False}},
+        partialFilterExpression={"is_premium": {"$exists:": False}},
     )
     # expires_atで消す
     bot.db.messages.create_index(
