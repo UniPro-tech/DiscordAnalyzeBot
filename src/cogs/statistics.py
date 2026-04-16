@@ -32,7 +32,9 @@ def setup_japanese_font():
         print("Warning: Japanese font not found.")
 
 
-def _generate_graph_worker(data: list, graph_type: str) -> Optional[bytes]:
+def _generate_graph_worker(
+    data: list, graph_type: str, interval: str = "monthly"
+) -> Optional[bytes]:
     """別プロセスで実行されるグラフ生成ワーカー"""
     if not data:
         return None
@@ -58,35 +60,40 @@ def _generate_graph_worker(data: list, graph_type: str) -> Optional[bytes]:
 
     try:
         if graph_type == "posts":
-            # 1. 投稿数の折れ線グラフ (月別)
-            df.index = df.index.strftime("%Y-%m")
-            # 修正: MongoDBですでに集計されているので "count" カラムをそのまま使う
-            monthly_posts = df["count"]
+            # 1. 投稿数の折れ線グラフ (月別 or 日別)
+            title_prefix = "日別" if interval == "daily" else "月別"
+            xlabel = "年月日" if interval == "daily" else "年月"
 
-            monthly_posts.plot(
-                kind="line", marker="o", color="tab:blue", linewidth=2, ax=ax
+            # 修正: DatetimeIndexのままプロットすることで、PandasがよしなにX軸目盛りを間引いてくれます
+            posts_data = df["count"]
+
+            # データ点が多い（日別で長期など）場合はマーカーを消してスッキリさせる
+            marker = "o" if len(posts_data) <= 60 else None
+
+            posts_data.plot(
+                kind="line", marker=marker, color="tab:blue", linewidth=2, ax=ax
             )
 
-            ax.set_title("月別投稿数の推移")
-            ax.set_xlabel("年月")
+            ax.set_title(f"{title_prefix}投稿数の推移")
+            ax.set_xlabel(xlabel)
             ax.set_ylabel("投稿数")
-            ax.tick_params(axis="x", rotation=45)
             ax.grid(True, linestyle="--", alpha=0.7)
 
         elif graph_type == "users":
-            # 2. 投稿者数の折れ線グラフ (月別ユニークユーザー数)
-            # 修正: MongoDB側で月別＆ユニークユーザー数が計算済み ("count" に格納されている)
-            df.index = df.index.strftime("%Y-%m")
-            monthly_users = df["count"]
+            # 2. 投稿者数の折れ線グラフ (月別 or 日別ユニークユーザー数)
+            title_prefix = "日別" if interval == "daily" else "月別"
+            xlabel = "年月日" if interval == "daily" else "年月"
 
-            monthly_users.plot(
-                kind="line", marker="o", color="tab:green", linewidth=2, ax=ax
+            users_data = df["count"]
+            marker = "o" if len(users_data) <= 60 else None
+
+            users_data.plot(
+                kind="line", marker=marker, color="tab:green", linewidth=2, ax=ax
             )
 
-            ax.set_title("月別アクティブユーザー数（投稿者数）の推移")
-            ax.set_xlabel("年月")
+            ax.set_title(f"{title_prefix}アクティブユーザー数（投稿者数）の推移")
+            ax.set_xlabel(xlabel)
             ax.set_ylabel("ユーザー数")
-            ax.tick_params(axis="x", rotation=45)
             ax.grid(True, linestyle="--", alpha=0.7)
 
         elif graph_type == "channels":
@@ -125,7 +132,6 @@ def _generate_graph_worker(data: list, graph_type: str) -> Optional[bytes]:
             # 4. 年での移動平均 (日別投稿数の365日移動平均)
             fig.set_size_inches(10, 5)
 
-            # 修正: すでに日別カウント済みだが、投稿が0日の欠損日付を埋めるためにリサンプリング
             daily_posts = df["count"].resample("D").sum().fillna(0)
             yearly_moving_avg = daily_posts.rolling(window=365, min_periods=1).mean()
 
@@ -205,6 +211,7 @@ class Statistics(commands.Cog):
         end: Optional[str],
         user: Optional[discord.User],
         channel: Optional[discord.TextChannel],
+        interval: str = "monthly",  # 月別か日別かの指定を受け取る
     ):
         """全グラフコマンド共通のデータ取得・生成・送信ロジック"""
         if interaction.guild_id is None:
@@ -246,18 +253,17 @@ class Statistics(commands.Cog):
                     [
                         {
                             "$group": {
-                                "_id": "$channel_id",  # IDをキーにする
+                                "_id": "$channel_id",
                                 "count": {"$sum": 1},
-                                "channel_name": {
-                                    "$first": "$channel_name"
-                                },  # 表示用に名前を保持
+                                "channel_name": {"$first": "$channel_name"},
                             }
                         },
                         {"$sort": {"count": -1}},
                     ]
                 )
             elif graph_type == "users":
-                # ユーザー数は「月とユーザーIDでグループ化」してから「月ごとの数をカウント」
+                # intervalに応じてフォーマットを切り替え
+                format_str = "%Y-%m-%d" if interval == "daily" else "%Y-%m"
                 pipeline.extend(
                     [
                         {
@@ -265,7 +271,7 @@ class Statistics(commands.Cog):
                                 "_id": {
                                     "date": {
                                         "$dateToString": {
-                                            "format": "%Y-%m",
+                                            "format": format_str,
                                             "date": "$timestamp",
                                             "timezone": "Asia/Tokyo",
                                         }
@@ -279,8 +285,12 @@ class Statistics(commands.Cog):
                     ]
                 )
             else:
-                # posts(月別) と moving_avg(日別) の投稿数カウント
-                format_str = "%Y-%m-%d" if graph_type == "moving_avg" else "%Y-%m"
+                # posts と moving_avg の投稿数カウント
+                if graph_type == "moving_avg":
+                    format_str = "%Y-%m-%d"
+                else:
+                    format_str = "%Y-%m-%d" if interval == "daily" else "%Y-%m"
+
                 pipeline.extend(
                     [
                         {
@@ -299,12 +309,10 @@ class Statistics(commands.Cog):
                     ]
                 )
 
-            # allowDiskUse=True を指定して大規模集計時のメモリ制限を回避
             cursor = self.bot.db.messages.aggregate(pipeline, allowDiskUse=True)
             return list(cursor)
 
         try:
-            # 取得されるデータは [{"_id": "2023-10", "count": 150}, ...] のような軽量なリストになる
             data = await asyncio.to_thread(fetch_data)
         except Exception as e:
             print(f"Database error in graphs: {e}")
@@ -319,11 +327,11 @@ class Statistics(commands.Cog):
             )
             return
 
-        # グラフ生成
+        # グラフ生成 (intervalをワーカーに渡す)
         try:
             loop = asyncio.get_running_loop()
             image_bytes = await loop.run_in_executor(
-                self.process_pool, _generate_graph_worker, data, graph_type
+                self.process_pool, _generate_graph_worker, data, graph_type, interval
             )
         except Exception as e:
             print(f"Graph generation error in graphs: {e}")
@@ -344,14 +352,19 @@ class Statistics(commands.Cog):
     # サブコマンド群
     # =========================================================
 
-    @graphs_group.command(
-        name="posts", description="月別の投稿数推移グラフを生成します"
-    )
+    @graphs_group.command(name="posts", description="投稿数推移グラフを生成します")
     @app_commands.describe(
         start="解析する期間の初め (@time機能を利用)",
         end="解析する期間の終わり (@time機能を利用)",
         user="特定のユーザーで絞り込み",
         channel="特定のチャンネルで絞り込み",
+        interval="集計の間隔（月別 または 日別）",
+    )
+    @app_commands.choices(
+        interval=[
+            app_commands.Choice(name="月別", value="monthly"),
+            app_commands.Choice(name="日別", value="daily"),
+        ]
     )
     async def graphs_posts(
         self,
@@ -360,19 +373,28 @@ class Statistics(commands.Cog):
         end: Optional[str] = None,
         user: Optional[discord.User] = None,
         channel: Optional[discord.TextChannel] = None,
+        interval: Optional[app_commands.Choice[str]] = None,
     ):
+        interval_value = interval.value if interval else "monthly"
         await self._handle_graph_request(
-            interaction, "posts", start, end, user, channel
+            interaction, "posts", start, end, user, channel, interval=interval_value
         )
 
     @graphs_group.command(
-        name="users", description="月別のアクティブユーザー数推移グラフを生成します"
+        name="users", description="アクティブユーザー数推移グラフを生成します"
     )
     @app_commands.describe(
         start="解析する期間の初め (@time機能を利用)",
         end="解析する期間の終わり (@time機能を利用)",
         user="特定のユーザーで絞り込み",
         channel="特定のチャンネルで絞り込み",
+        interval="集計の間隔（月別 または 日別）",
+    )
+    @app_commands.choices(
+        interval=[
+            app_commands.Choice(name="月別", value="monthly"),
+            app_commands.Choice(name="日別", value="daily"),
+        ]
     )
     async def graphs_users(
         self,
@@ -381,9 +403,11 @@ class Statistics(commands.Cog):
         end: Optional[str] = None,
         user: Optional[discord.User] = None,
         channel: Optional[discord.TextChannel] = None,
+        interval: Optional[app_commands.Choice[str]] = None,
     ):
+        interval_value = interval.value if interval else "monthly"
         await self._handle_graph_request(
-            interaction, "users", start, end, user, channel
+            interaction, "users", start, end, user, channel, interval=interval_value
         )
 
     @graphs_group.command(
@@ -401,7 +425,6 @@ class Statistics(commands.Cog):
         end: Optional[str] = None,
         user: Optional[discord.User] = None,
     ):
-        # チャンネル円グラフでチャンネル絞り込みは矛盾するため、引数からchannelを除外しています
         await self._handle_graph_request(
             interaction, "channels", start, end, user, None
         )
