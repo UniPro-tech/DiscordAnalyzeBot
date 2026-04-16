@@ -314,6 +314,7 @@ async def main():
     await bot.load_extension("cogs.network")
     await bot.load_extension("cogs.admin")
     await bot.load_extension("cogs.utils")
+    await bot.load_extension("cogs.statistics")
 
     async with bot:
         await bot.start(TOKEN)
