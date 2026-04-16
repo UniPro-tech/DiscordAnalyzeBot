@@ -46,10 +46,7 @@ class ConversationNetwork(commands.Cog):
         embed_helper = EmbedHelper(function_name="ConversationNetwork")
 
         if interaction.guild_id is None:
-            embed = embed_helper.create_error_embed(
-                title="エラー",
-                description="このコマンドはサーバー内で使ってください。",
-            )
+            embed = embed_helper.create_guild_only_error()
             await interaction.response.send_message(embed=embed, ephemeral=True)
             return
 
