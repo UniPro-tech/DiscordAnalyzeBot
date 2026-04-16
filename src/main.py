@@ -3,6 +3,7 @@ import os
 import sys
 import asyncio
 import re
+from datetime import datetime, timedelta
 from pymongo import MongoClient
 from discord.ext import commands, tasks
 from libs.message_store import (
@@ -53,21 +54,18 @@ def setup_db():
     )
     bot.db.messages.create_index("reply_to", name="reply_to_idx")
 
-    # TTL Index: 30日後に自動的に削除
-    # 1. 一般ユーザー用（is_premium が true ではない、または存在しない場合）
+    # 過去データ用
     bot.db.messages.create_index(
         "timestamp",
         expireAfterSeconds=31 * 24 * 60 * 60,
         name="timestamp_ttl_normal",
-        partialFilterExpression={"is_premium": {"$ne": True}},
+        partialFilterExpression={"is_premium": {"$$exists:": False}},
     )
-
-    # 2. Premiumユーザー用
+    # expires_atで消す
     bot.db.messages.create_index(
-        "timestamp",
-        expireAfterSeconds=365 * 24 * 60 * 60,
-        name="timestamp_ttl_premium",
-        partialFilterExpression={"is_premium": True},
+        "expires_at",
+        expireAfterSeconds=0,
+        name="expires_at_ttl",
     )
 
     # Guild設定: guild_idごとに1ドキュメント
@@ -170,6 +168,10 @@ async def on_message(message: discord.Message):
 
     reply_to = str(message.reference.message_id) if message.reference else None
 
+    # 有効期限を追加
+    days = 365 if is_premium else 31
+    expire_date = datetime.utcnow() + timedelta(days=days)
+
     data = {
         "message_id": str(message.id),
         "guild_id": guild_id,
@@ -191,6 +193,7 @@ async def on_message(message: discord.Message):
         "emoji_count": len(emojis),
         "url_count": len(re.findall(r"https?://\S+", message.content)),
         "is_premium": is_premium,
+        "expires_at": expire_date,
     }
 
     # トークン化とDB保存
