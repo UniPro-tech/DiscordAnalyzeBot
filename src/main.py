@@ -464,17 +464,6 @@ def migrate_add_expires_at():
     print("Starting migration: Adding expires_at to old documents...")
 
     # 1. expires_at が存在しないドキュメントを対象にする
-    # 2. $addFields で timestamp (Date型) に 31日分 (31 * 24 * 60 * 60 * 1000 ミリ秒) を加算
-    update_pipeline = [
-        {
-            "$match": {
-                "expires_at": {"$exists": False},
-                "timestamp": {"$type": "date"},  # 既にDate型変換済みであることが前提
-            }
-        },
-        {"$set": {"expires_at": {"$add": ["$timestamp", 31 * 24 * 60 * 60 * 1000]}}},
-    ]
-
     try:
         # 集計パイプラインを使用して一括更新
         # 注意: MongoDB 4.2+ が必要です
