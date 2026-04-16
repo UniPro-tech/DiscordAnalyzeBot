@@ -35,11 +35,15 @@ def _generate_graph_worker(data: list, graph_type: str) -> Optional[bytes]:
 
     # 1. データの準備
     df = pd.DataFrame(data)
-    df["timestamp"] = (
-        pd.to_datetime(df["timestamp"], utc=True)
-        .dt.tz_convert("Asia/Tokyo")
-        .dt.tz_localize(None)
-    )
+    # 集約データの形式に応じてDataFrameを整形
+    if graph_type == "channels":
+        # {"_id": "channel_name", "count": N} 形式
+        df = df.rename(columns={"_id": "channel_name"})
+    else:
+        # {"_id": "2023-10", "count": N} または {"_id": "2023-10-01", "count": N} 形式
+        df = df.rename(columns={"_id": "date"})
+        df["date"] = pd.to_datetime(df["date"])
+        df = df.set_index("date").sort_index()
 
     # 2. 描画設定 (ここで1回だけ実行)
     plt.style.use("default")
@@ -51,8 +55,8 @@ def _generate_graph_worker(data: list, graph_type: str) -> Optional[bytes]:
     try:
         if graph_type == "posts":
             # 1. 投稿数の折れ線グラフ (月別)
-            monthly_posts = df.resample("ME", on="timestamp").size()
-            monthly_posts.index = monthly_posts.index.strftime("%Y-%m")
+            df.index = df.index.strftime("%Y-%m")
+            monthly_posts = df["count"]
 
             monthly_posts.plot(
                 kind="line", marker="o", color="tab:blue", linewidth=2, ax=ax
