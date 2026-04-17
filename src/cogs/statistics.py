@@ -360,7 +360,8 @@ class Statistics(commands.Cog):
             binary_data=image_bytes,
             filename=f"graph_{graph_type}.png",
         )
-        await interaction.followup.send(embed=embed)
+        file = discord.File(io.BytesIO(image_bytes), filename=f"graph_{graph_type}.png")
+        await interaction.followup.send(embed=embed, file=file)
 
     # =========================================================
     # サブコマンド群
