@@ -1,6 +1,6 @@
 [project]
 name = "analyze-bot"
-version = "1.0.0rc1"
+version = "1.0.0rc2"
 description = "This is a Discord bot that analyzes the frequency of words used in messages and generates a word cloud."
 readme = "README.md"
 requires-python = ">=3.11"
