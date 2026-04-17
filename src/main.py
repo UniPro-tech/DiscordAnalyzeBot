@@ -163,7 +163,7 @@ async def on_message(message: discord.Message):
 
     # 有効期限を追加
     days = 365 if is_premium else 31
-    expire_date = datetime.utcnow() + timedelta(days=days)
+    expire_date = datetime.now(datetime.UTC) + timedelta(days=days)
 
     data = {
         "message_id": str(message.id),
