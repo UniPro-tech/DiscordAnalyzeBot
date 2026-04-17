@@ -358,10 +358,14 @@ class Statistics(commands.Cog):
             title=":bar_chart: グラフの生成完了",
             description=f"{interaction.user.mention} グラフの生成が完了しました！\n(集計バケット数: {len(data):,}件)",
             binary_data=image_bytes,
-            filename=f"graph_{graph_type}.png",
+            binary_filename=f"graph_{graph_type}.png",
         )
-        file = discord.File(io.BytesIO(image_bytes), filename=f"graph_{graph_type}.png")
-        await interaction.followup.send(embed=embed, file=file)
+        await interaction.followup.send(
+            embed=embed,
+            file=discord.File(
+                fp=io.BytesIO(image_bytes), filename=f"graph_{graph_type}.png"
+            ),
+        )
 
     # =========================================================
     # サブコマンド群
