@@ -3,7 +3,7 @@ import os
 import sys
 import asyncio
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pymongo import MongoClient
 from discord.ext import commands, tasks
 from libs.message_store import (
@@ -123,11 +123,9 @@ async def on_message(message: discord.Message):
     # Bot自身やDMは無視
     if message.author.bot or message.guild is None:
         return
-
     guild_id = str(message.guild.id)
     channel_id = str(message.channel.id)
     user_id = str(message.author.id)
-
     # スレッドの場合は親チャンネルIDを取得（Forum以外もカバー）
     parent_channel_id = None
     if isinstance(message.channel, discord.Thread):
@@ -144,27 +142,25 @@ async def on_message(message: discord.Message):
             parent_channel_id=parent_channel_id,
         )
 
-    # プレミアム状況の確認
-    is_premium = bot.db.guild_settings.find_one(
-        {"guild_id": guild_id}, {"is_premium": 1}
-    )
-
     channel_opted_out, user_opted_out = await asyncio.to_thread(collect_opt_out_flags)
-
     # いずれかがオプトアウトなら処理終了
     if channel_opted_out or user_opted_out:
         return
 
+        # プレミアム状況の確認
+    premium_data = bot.db.guild_settings.find_one(
+        {"guild_id": guild_id}, {"is_premium": True}
+    )
+    is_premium_status = bool(premium_data and premium_data.get("is_premium"))
+
     # メッセージデータの構築
     emoji_pattern = r"<a?:\w+:\d+>"
     emojis = re.findall(emoji_pattern, message.content)
-
     reply_to = str(message.reference.message_id) if message.reference else None
 
     # 有効期限を追加
-    days = 365 if is_premium else 31
-    expire_date = datetime.now(datetime.UTC) + timedelta(days=days)
-
+    days = 365 if is_premium_status else 31
+    expire_date = datetime.now(timezone.utc) + timedelta(days=days)
     data = {
         "message_id": str(message.id),
         "guild_id": guild_id,
@@ -185,17 +181,24 @@ async def on_message(message: discord.Message):
         "length": len(message.content),
         "emoji_count": len(emojis),
         "url_count": len(re.findall(r"https?://\S+", message.content)),
-        "is_premium": is_premium,
+        "is_premium": is_premium_status,
         "expires_at": expire_date,
     }
 
     # トークン化とDB保存
     def _save_message(d: dict) -> None:
-        content = d.get("content", "")
-        if content:
-            # 形態素解析などはCPU負荷が高いためスレッドプールで実行
-            d["tokens"] = list(extract_tokens(normalize_text(content)))
-        bot.db.messages.insert_one(d)
+        try:
+            content = d.get("content", "")
+            if content:
+                d["tokens"] = list(extract_tokens(normalize_text(content)))
+
+            # insert_one ではなく、念のため upsert (あれば更新、なければ挿入) にする
+            # これにより DuplicateKeyError を回避できます
+            bot.db.messages.update_one(
+                {"message_id": d["message_id"]}, {"$set": d}, upsert=True
+            )
+        except Exception as e:
+            print(f"DB Save Error: {e}")  # エラーを可視化する
 
     await asyncio.to_thread(_save_message, data)
 
