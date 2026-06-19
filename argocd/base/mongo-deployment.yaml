@@ -3,6 +3,7 @@ kind: Deployment
 metadata:
   name: mongo
 spec:
+  revisionHistoryLimit: 2
   selector:
     matchLabels:
       app: mongo

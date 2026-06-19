@@ -4,7 +4,6 @@ metadata:
   name: analyze-bot
   namespace: argocd
 spec:
-  namespace: argocd
   applicationRefs:
     - namePattern: "analyze-bot"
       images:

@@ -3,6 +3,7 @@ kind: Deployment
 metadata:
   name: analyze-bot-site
 spec:
+  revisionHistoryLimit: 2
   selector:
     matchLabels:
       app: analyze-bot-site
