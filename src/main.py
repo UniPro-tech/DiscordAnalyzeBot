@@ -1,8 +1,10 @@
-import discord
+import logging
 import os
 import sys
 import asyncio
 import re
+import discord
+import structlog
 from datetime import datetime, timedelta, timezone
 from pymongo import MongoClient
 from discord.ext import commands, tasks
@@ -15,6 +17,47 @@ from libs.text_processing import extract_tokens, normalize_text
 
 # Add src directory to sys.path for imports
 sys.path.insert(0, os.path.dirname(__file__))
+
+# --- structlog Configuration ---
+logging.basicConfig(
+    format="%(message)s",
+    stream=sys.stdout,
+    level=logging.INFO,
+)
+
+if os.getenv("DEVELOP") == "TRUE":
+    structlog.configure(
+        processors=[
+            structlog.stdlib.add_log_level,
+            structlog.stdlib.add_logger_name,
+            structlog.processors.TimeStamper(fmt="iso"),
+            structlog.processors.StackInfoRenderer(),
+            structlog.processors.format_exc_info,
+            structlog.processors.JSONRenderer(),
+        ],
+        context_class=dict,
+        logger_factory=structlog.stdlib.LoggerFactory(),
+        wrapper_class=structlog.stdlib.BoundLogger,
+        cache_logger_on_first_use=True,
+    )
+else:
+    structlog.configure(
+        processors=[
+            structlog.stdlib.add_log_level,
+            structlog.stdlib.add_logger_name,
+            structlog.processors.TimeStamper(fmt="iso"),
+            structlog.processors.StackInfoRenderer(),
+            structlog.processors.format_exc_info,
+            structlog.dev.ConsoleRenderer(),
+        ],
+        context_class=dict,
+        logger_factory=structlog.stdlib.LoggerFactory(),
+        wrapper_class=structlog.stdlib.BoundLogger,
+        cache_logger_on_first_use=True,
+    )
+
+logger = structlog.get_logger()
+# -------------------------------
 
 TOKEN = os.getenv("DISCORD_TOKEN")
 DB_DSN = os.getenv("MONGODB_DSN")
@@ -82,7 +125,7 @@ async def on_ready():
     if not rotate_status.is_running():
         rotate_status.start()
     await bot.tree.sync()
-    print(f"Logged in as {bot.user}")
+    logger.info("bot_logged_in", user=str(bot.user))
 
 
 async def _get_status_messages():
@@ -147,7 +190,7 @@ async def on_message(message: discord.Message):
     if channel_opted_out or user_opted_out:
         return
 
-        # プレミアム状況の確認
+    # プレミアム状況の確認
     premium_data = bot.db.guild_settings.find_one(
         {"guild_id": guild_id}, {"is_premium": True}
     )
@@ -198,7 +241,12 @@ async def on_message(message: discord.Message):
                 {"message_id": d["message_id"]}, {"$set": d}, upsert=True
             )
         except Exception as e:
-            print(f"DB Save Error: {e}")  # エラーを可視化する
+            logger.error(
+                "db_save_error",
+                error=str(e),
+                message_id=d.get("message_id"),
+                guild_id=d.get("guild_id"),
+            )
 
     await asyncio.to_thread(_save_message, data)
 
@@ -208,16 +256,15 @@ async def on_message(message: discord.Message):
 
 @bot.event
 async def on_guild_remove(guild):
-    print(f"Left guild: {guild.name} (ID: {guild.id})")
+    logger.info("guild_left", guild_name=guild.name, guild_id=guild.id)
     deleted = delete_guild_data(bot.db, str(guild.id))
-    print(
-        f"Deleted {deleted['messages']} messages from the database for guild {guild.name}"
-    )
-    print(
-        f"Deleted {deleted['guild_settings']} guild settings from the database for guild {guild.name}"
-    )
-    print(
-        f"Deleted {deleted['channel_settings']} channel settings from the database for guild {guild.name}"
+    logger.info(
+        "guild_data_deleted",
+        guild_name=guild.name,
+        guild_id=guild.id,
+        deleted_messages=deleted.get("messages", 0),
+        deleted_guild_settings=deleted.get("guild_settings", 0),
+        deleted_channel_settings=deleted.get("channel_settings", 0),
     )
 
 
@@ -235,8 +282,14 @@ async def on_raw_message_delete(payload):
         channel = bot.get_channel(payload.channel_id)
         guild_name = guild.name if guild is not None else "Unknown Guild"
         channel_name = channel.name if channel is not None else "Unknown Channel"
-        print(
-            f"Deleted {deleted_count} message records from the database for deleted message in guild '{guild_name}' (ID: {payload.guild_id}), channel '{channel_name}' (ID: {payload.channel_id})"
+
+        logger.info(
+            "message_deleted",
+            guild_id=payload.guild_id,
+            channel_id=payload.channel_id,
+            guild_name=guild_name,
+            channel_name=channel_name,
+            deleted_count=deleted_count,
         )
 
 
@@ -252,19 +305,25 @@ async def on_raw_bulk_message_delete(payload):
     if deleted_count > 0:
         guild = bot.get_guild(payload.guild_id)
         guild_name = guild.name if guild is not None else "Unknown Guild"
-        print(
-            f"Deleted {deleted_count} message records from the database for bulk deleted messages in guild '{guild_name}' (ID: {payload.guild_id})"
+
+        logger.info(
+            "bulk_messages_deleted",
+            guild_id=payload.guild_id,
+            guild_name=guild_name,
+            deleted_count=deleted_count,
         )
 
 
 @bot.event
 async def on_guild_join(guild):
-    print(f"Joined guild: {guild.name} (ID: {guild.id})")
+    logger.info("guild_joined", guild_name=guild.name, guild_id=guild.id)
     try:
         owner = guild.owner  # サーバーオーナー
 
         if owner is None:
-            print(f"Failed to get owner info: {guild.name}")
+            logger.warning(
+                "owner_info_not_found", guild_name=guild.name, guild_id=guild.id
+            )
             return
 
         message = """
@@ -304,15 +363,23 @@ Analyze Botは、サーバー内のテキストチャンネルのメッセージ
 """
         await owner.send(message)
     except discord.Forbidden:
-        print(f"{guild.name} のオーナーに権限不足のためDMを送れませんでした")
+        logger.error(
+            "welcome_message_forbidden",
+            guild_name=guild.name,
+            guild_id=guild.id,
+            reason="Insufficient permissions",
+        )
     except Exception as e:
-        print(
-            f"{guild.name} へのウェルカムメッセージの送信中にエラーが発生しました: {e}"
+        logger.error(
+            "welcome_message_failed",
+            guild_name=guild.name,
+            guild_id=guild.id,
+            error=str(e),
         )
 
 
 async def main():
-    print("Starting bot...")
+    logger.info("bot_starting")
     setup_db()
 
     await bot.load_extension("cogs.ping")
@@ -330,13 +397,13 @@ async def main():
 
 def migrate_timestamps_to_date():
     if not DB_DSN:
-        print("Error: Mongo DB_DSN is not set")
+        logger.error("migration_missing_dsn", migration="timestamps_to_date")
         return
 
     client_db = MongoClient(DB_DSN)
     db = client_db["discord_analyzer"]
 
-    print("Starting migrate type of timestamp to datetime...")
+    logger.info("migration_started", migration="timestamps_to_date")
 
     # 対象: timestampフィールドが文字列(string)であるドキュメント
     filter_query = {"timestamp": {"$type": "string"}}
@@ -348,12 +415,15 @@ def migrate_timestamps_to_date():
         # update_manyにパイプライン（リスト形式）を渡すことでサーバー側で一括変換
         result = db.messages.update_many(filter_query, update_pipeline)
 
-        print(f"Target Document Count: {result.matched_count}")
-        print(f"Updated Document Count {result.modified_count}")
-        print("Migration Successfully")
+        logger.info(
+            "migration_completed",
+            migration="timestamps_to_date",
+            matched_count=result.matched_count,
+            modified_count=result.modified_count,
+        )
 
     except Exception as e:
-        print(f"Migration failed: {e}")
+        logger.error("migration_failed", migration="timestamps_to_date", error=str(e))
         raise
     finally:
         client_db.close()
@@ -361,21 +431,21 @@ def migrate_timestamps_to_date():
 
 def delete_all_index():
     if not DB_DSN:
-        print("Error: Mongo DB_DSN is not set")
+        logger.error("migration_missing_dsn", migration="delete_all_index")
         return
 
     client_db = MongoClient(DB_DSN)
     db = client_db["discord_analyzer"]
 
-    print("Starting delete all indexes...")
+    logger.info("migration_started", migration="delete_all_index")
 
     try:
         for collection_name in bot.db.list_collection_names():
             db[collection_name].drop_indexes()
-        print("Deletion Successfully")
+        logger.info("migration_completed", migration="delete_all_index")
 
     except Exception as e:
-        print(f"Migration failed: {e}")
+        logger.error("migration_failed", migration="delete_all_index", error=str(e))
         raise
     finally:
         client_db.close()
@@ -383,12 +453,12 @@ def delete_all_index():
 
 def migrate_to_new_settings_structure():
     if not DB_DSN:
-        print("Error: Mongo DB_DSN is not set")
+        logger.error("migration_missing_dsn", migration="new_settings_structure")
         return
 
     client = MongoClient(DB_DSN)
     db = client["discord_analyzer"]
-    print("Starting structural migration...")
+    logger.info("migration_started", migration="new_settings_structure")
 
     # 1. channel_settings からオプトアウト済みのチャンネルを取得し、guild_settingsへ統合
     channels = db.channel_settings.find({"opt_out": True})
@@ -398,7 +468,7 @@ def migrate_to_new_settings_structure():
             {"$addToSet": {"optout_channels": ch["channel_id"]}},
             upsert=True,
         )
-    print("Migrated channel opt-outs to guild_settings.optout_channels")
+    logger.info("migration_step_completed", step="migrated_channel_opt_outs")
 
     # 2. 既存の古い guild_settings レコードを 1 つの guild_id ドキュメントに集約
     # frequency フィールドを持つ古い形式のドキュメントを抽出
@@ -431,24 +501,18 @@ def migrate_to_new_settings_structure():
         processed_ids.append(doc["_id"])
 
     # 全てのデータを統合した後、古い「個別のレコード」を特定して削除
-    # ただし、集約先のドキュメント自体も processed_ids に含まれている可能性があるため
-    # 「集約後（schedulesが存在する）かつ 古いフィールド（frequency）が残っている」ものを消すか
-    # 単純に frequency フィールドを持つ古い形式を全て unset/整理する
-
-    # 集約が完了したので、古い個別ドキュメントの残骸を一掃（重複排除）
-    # frequency フィールドを持つドキュメントを一括でクリーンアップ、または削除
     db.guild_settings.delete_many(
         {"_id": {"$in": processed_ids}, "frequency": {"$exists": True}}
     )
 
-    print("Migrated and consolidated old guild_settings to unified schedules format")
+    logger.info("migration_step_completed", step="migrated_guild_settings")
 
     # 3. インデックスの再設定
-    print("Re-creating indexes...")
     db.guild_settings.drop_indexes()
     db.guild_settings.create_index("guild_id", unique=True, name="guild_id_unique")
 
-    print("Migration Successfully")
+    logger.info("migration_step_completed", step="recreated_indexes")
+    logger.info("migration_completed", migration="new_settings_structure")
     client.close()
 
 
@@ -458,13 +522,13 @@ def migrate_add_expires_at():
     timestamp + 31日 を計算してセットするマイグレーション
     """
     if not DB_DSN:
-        print("Error: Mongo DB_DSN is not set")
+        logger.error("migration_missing_dsn", migration="add_expires_at")
         return
 
     client_db = MongoClient(DB_DSN)
     db = client_db["discord_analyzer"]
 
-    print("Starting migration: Adding expires_at to old documents...")
+    logger.info("migration_started", migration="add_expires_at")
 
     # 1. expires_at が存在しないドキュメントを対象にする
     try:
@@ -481,11 +545,15 @@ def migrate_add_expires_at():
             ],
         )
 
-        print(f"Matched: {result.matched_count}, Updated: {result.modified_count}")
-        print("Migration for expires_at Successfully")
+        logger.info(
+            "migration_completed",
+            migration="add_expires_at",
+            matched_count=result.matched_count,
+            modified_count=result.modified_count,
+        )
 
     except Exception as e:
-        print(f"Migration failed: {e}")
+        logger.error("migration_failed", migration="add_expires_at", error=str(e))
         raise
     finally:
         client_db.close()

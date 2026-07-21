@@ -11,6 +11,7 @@ dependencies = [
     "pandas>=3.0.2",
     "pymongo>=4.16.0",
     "scipy>=1.17.1",
+    "structlog>=26.1.0",
     "sudachidict-core>=20260116",
     "sudachipy>=0.6.10",
     "wordcloud>=1.9.6",
@@ -21,3 +22,7 @@ dev = [
     "python-dotenv>=1.2.2",
     "pytest>=9.0.2",
 ]
+
+[[tool.uv.index]]
+url = "https://pypi.flatt.tech/simple/"
+default = true

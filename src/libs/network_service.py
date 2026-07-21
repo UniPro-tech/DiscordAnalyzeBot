@@ -4,12 +4,16 @@ import math
 from typing import Callable
 import unicodedata
 from datetime import datetime
+import structlog
 
 from libs.visualization_common import resolve_font_path
 
 import matplotlib.font_manager as fm
 import matplotlib.pyplot as plt
 import networkx as nx
+
+# ロガーの初期化
+logger = structlog.get_logger(__name__)
 
 DEFAULT_MESSAGE_LIMIT = 5000
 CANVAS_WIDTH_PX = 3200
@@ -56,7 +60,14 @@ def fetch_network_documents(
     channel_id: str | None = None,
     limit: int = DEFAULT_MESSAGE_LIMIT,
 ) -> list[dict]:
-    # build_network_message_queryの引数を修正
+    logger.info(
+        "fetching_network_documents_started",
+        guild_id=guild_id,
+        user_id=user_id,
+        channel_id=channel_id,
+        limit=limit,
+    )
+
     query = build_network_message_query(
         guild_id,
         start=start,
@@ -90,7 +101,14 @@ def fetch_network_documents(
     }
 
     if not missing_reply_target_ids:
+        logger.info(
+            "fetching_network_documents_completed",
+            total_docs=len(docs),
+            missing_replies_fetched=0,
+        )
         return docs
+
+    logger.debug("fetching_missing_reply_targets", count=len(missing_reply_target_ids))
 
     reply_target_docs = db.messages.find(
         {
@@ -103,6 +121,7 @@ def fetch_network_documents(
         },
     )
 
+    added_reply_targets = 0
     for reply_target_doc in reply_target_docs:
         message_id = reply_target_doc.get("message_id")
 
@@ -122,7 +141,13 @@ def fetch_network_documents(
             }
         )
         existing_message_ids.add(normalized_message_id)
+        added_reply_targets += 1
 
+    logger.info(
+        "fetching_network_documents_completed",
+        total_docs=len(docs),
+        missing_replies_fetched=added_reply_targets,
+    )
     return docs
 
 
@@ -159,15 +184,24 @@ def normalize_network_documents(docs: list[dict]) -> tuple[list[dict], int]:
             }
         )
 
+    if invalid_doc_count > 0:
+        logger.debug(
+            "network_documents_normalized",
+            valid=len(valid_docs),
+            invalid=invalid_doc_count,
+        )
+
     return valid_docs, invalid_doc_count
 
 
 def build_conversation_edges(
     docs: list[dict],
 ) -> tuple[dict[tuple[str, str], int], int]:
+    logger.info("building_conversation_edges_started", docs_count=len(docs))
     valid_docs, invalid_doc_count = normalize_network_documents(docs)
 
     if not valid_docs:
+        logger.warning("no_valid_documents_for_edges", invalid_docs=invalid_doc_count)
         return {}, invalid_doc_count
 
     msg_map = {doc["message_id"]: doc for doc in valid_docs}
@@ -193,6 +227,11 @@ def build_conversation_edges(
             if mentioned != author:
                 edges[tuple(sorted([author, mentioned]))] += 1
 
+    logger.info(
+        "conversation_edges_built",
+        edges_count=len(edges),
+        invalid_docs=invalid_doc_count,
+    )
     return dict(edges), invalid_doc_count
 
 
@@ -337,10 +376,12 @@ def generate_conversation_network(
     labels: dict[str, str] | None = None,
 ) -> io.BytesIO:
     if not edges:
+        logger.warning("network_generation_failed", reason="no_edges_provided")
         raise ValueError("会話エッジがありません")
 
     font_path = resolve_font_path()
     if font_path is None:
+        logger.error("network_font_not_found")
         raise RuntimeError("フォント無し")
 
     font_prop = fm.FontProperties(fname=font_path)
@@ -368,7 +409,16 @@ def generate_conversation_network(
         graph.add_edge(node_map[user_a], node_map[user_b], weight=weight)
 
     if graph.number_of_edges() == 0:
+        logger.warning(
+            "network_generation_failed", reason="no_valid_edges_after_filtering"
+        )
         raise ValueError("表示条件を満たす会話エッジがありません")
+
+    logger.info(
+        "generating_network_graph",
+        nodes_count=graph.number_of_nodes(),
+        edges_count=graph.number_of_edges(),
+    )
 
     label_texts = list(display_labels.values())
     max_label_width, _ = summarize_label_metrics(label_texts)
@@ -436,4 +486,5 @@ def generate_conversation_network(
     finally:
         plt.close(figure)
 
+    logger.debug("network_graph_generated_successfully")
     return buffer

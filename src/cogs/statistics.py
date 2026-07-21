@@ -14,10 +14,14 @@ import pandas as pd
 from discord import app_commands
 from discord.ext import commands
 import matplotlib.font_manager as fm
+import structlog
 
 from libs.parser import parse_discord_timestamp
 from libs.visualization_common import resolve_font_path
 from libs.embed import EmbedHelper
+
+# ロガーの初期化
+logger = structlog.get_logger(__name__)
 
 
 def setup_japanese_font():
@@ -30,7 +34,7 @@ def setup_japanese_font():
         font_prop = fm.FontProperties(fname=font_path)
         plt.rcParams["font.family"] = font_prop.get_name()
     else:
-        print("Warning: Japanese font not found.")
+        logger.warning("japanese_font_not_found")
 
 
 def _generate_graph_worker(
@@ -38,6 +42,7 @@ def _generate_graph_worker(
 ) -> Optional[bytes]:
     """別プロセスで実行されるグラフ生成ワーカー"""
     if not data:
+        logger.warning("generate_graph_worker_empty_data", graph_type=graph_type)
         return None
 
     # 1. データの準備
@@ -160,6 +165,9 @@ def _generate_graph_worker(
         fig.savefig(buf, format="png")
         return buf.getvalue()
 
+    except Exception as e:
+        logger.error("graph_rendering_error", graph_type=graph_type, error=str(e))
+        raise
     finally:
         plt.close(fig)
 
@@ -177,6 +185,7 @@ class Statistics(commands.Cog):
     def cog_unload(self):
         # Cogアンロード時にプールを安全に閉じる
         self.process_pool.shutdown(wait=True, cancel_futures=True)
+        logger.info("statistics_cog_unloaded")
 
     def _build_query(
         self,
@@ -217,6 +226,9 @@ class Statistics(commands.Cog):
         """全グラフコマンド共通のデータ取得・生成・送信ロジック"""
         embed_helper = EmbedHelper(function_name="Statistics")
         if interaction.guild_id is None:
+            logger.warning(
+                "graph_request_guild_only_error", user_id=str(interaction.user.id)
+            )
             embed = embed_helper.create_guild_only_error()
             await interaction.response.send_message(embed=embed, ephemeral=True)
             return
@@ -228,7 +240,14 @@ class Statistics(commands.Cog):
                 start_dt = parse_discord_timestamp(start)
             if end:
                 end_dt = parse_discord_timestamp(end)
-        except ValueError:
+        except ValueError as e:
+            logger.warning(
+                "invalid_timestamp_format",
+                user_id=str(interaction.user.id),
+                start=start,
+                end=end,
+                error=str(e),
+            )
             embed = embed_helper.create_error_embed(
                 title="入力エラー",
                 description="時間の指定が正しくありません。Discordのタイムスタンプ機能を使って入力してください。",
@@ -244,6 +263,17 @@ class Statistics(commands.Cog):
         user_id = str(user.id) if user else None
         channel_id = str(channel.id) if channel else None
         guild_id = str(interaction.guild_id)
+
+        logger.info(
+            "graph_request_received",
+            graph_type=graph_type,
+            interval=interval,
+            guild_id=guild_id,
+            user_id=user_id,
+            channel_id=channel_id,
+            start=start,
+            end=end,
+        )
 
         # クエリ構築とDBアクセス
         query = self._build_query(guild_id, start_dt, end_dt, user_id, channel_id)
@@ -320,7 +350,12 @@ class Statistics(commands.Cog):
         try:
             data = await asyncio.to_thread(fetch_data)
         except Exception as e:
-            print(f"Database error in graphs: {e}")
+            logger.error(
+                "database_aggregation_error",
+                graph_type=graph_type,
+                error=str(e),
+                exc_info=True,
+            )
             embed = embed_helper.create_error_embed(
                 title="内部エラー",
                 description="データベースからのデータ取得中にエラーが発生しました。",
@@ -329,6 +364,7 @@ class Statistics(commands.Cog):
             return
 
         if not data:
+            logger.info("graph_data_empty", graph_type=graph_type, guild_id=guild_id)
             embed = embed_helper.create_no_data_error(is_filtered=True)
             await interaction.followup.send(embed=embed)
             return
@@ -340,7 +376,12 @@ class Statistics(commands.Cog):
                 self.process_pool, _generate_graph_worker, data, graph_type, interval
             )
         except Exception as e:
-            print(f"Graph generation error in graphs: {e}")
+            logger.error(
+                "graph_generation_failed",
+                graph_type=graph_type,
+                error=str(e),
+                exc_info=True,
+            )
             embed = embed_helper.create_error_embed(
                 title="内部エラー", description="グラフの生成中にエラーが発生しました。"
             )
@@ -348,6 +389,7 @@ class Statistics(commands.Cog):
             return
 
         if not image_bytes:
+            logger.error("graph_generation_returned_none", graph_type=graph_type)
             embed = embed_helper.create_error_embed(
                 title="内部エラー", description="グラフの生成中にエラーが発生しました。"
             )
@@ -365,6 +407,9 @@ class Statistics(commands.Cog):
             file=discord.File(
                 fp=io.BytesIO(image_bytes), filename=f"graph_{graph_type}.png"
             ),
+        )
+        logger.info(
+            "graph_successfully_sent", graph_type=graph_type, bucket_count=len(data)
         )
 
     # =========================================================

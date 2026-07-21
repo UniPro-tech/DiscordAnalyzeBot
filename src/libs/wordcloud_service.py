@@ -6,6 +6,7 @@ from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from pymongo import UpdateOne
 from zoneinfo import ZoneInfo
+import structlog
 
 from libs.visualization_common import resolve_font_path
 
@@ -22,6 +23,8 @@ from libs.text_processing import (
 import matplotlib.pyplot as plt
 from wordcloud import WordCloud
 
+# ロガーの初期化
+logger = structlog.get_logger(__name__)
 
 PMI_THRESHOLD = 3
 COUNT_THRESHOLD = 10
@@ -252,7 +255,9 @@ def learn_from_texts(db, texts: list[str], workers: int = 4) -> None:
             # SudachiPy tokenizerはスレッドセーフではないため、環境によっては
             # 並列実行時に "Already borrowed" が発生する。その場合は逐次処理へフォールバックする。
             if "Already borrowed" not in str(error):
+                logger.error("learn_from_texts_unexpected_error", error=str(error))
                 raise
+            logger.warning("sudachi_thread_contention", fallback="sequential")
             _aggregate_sequential()
 
     # 一括更新のためのUpdateOneオペレーションを作成して、DBに反映する。
@@ -270,6 +275,13 @@ def learn_from_texts(db, texts: list[str], workers: int = 4) -> None:
 
     if ngram_ops:
         db.ngrams.bulk_write(ngram_ops, ordered=False)
+
+    logger.debug(
+        "learned_from_texts_batch_complete",
+        texts_count=len(texts),
+        unigram_ops=len(unigram_ops),
+        ngram_ops=len(ngram_ops),
+    )
 
 
 def _compute_bigram_pmi(
@@ -304,7 +316,10 @@ def update_compounds(db) -> None:
     total = get_total_unigram_count(db)
 
     if total == 0:
+        logger.debug("update_compounds_skipped", reason="no_unigrams")
         return
+
+    logger.info("update_compounds_started", total_unigrams=total)
 
     # 全unigramをロードして、PMI計算で頻度参照するための辞書を作る。
     unigram_counts: dict[str, int] = {
@@ -399,6 +414,9 @@ def update_compounds(db) -> None:
 
     # 学習の最後に、抽出トークンのキャッシュをクリアして、次回以降の抽出で新しい複合語を反映させる。
     clear_extract_tokens_cache()
+    logger.info(
+        "update_compounds_completed", accepted_bigrams_count=len(accepted_bigrams)
+    )
 
 
 def load_compounds(db) -> set[str]:
@@ -428,6 +446,7 @@ def generate_wordcloud_image(db, docs: list[dict]) -> io.BytesIO:
     font_path = resolve_font_path()
 
     if font_path is None:
+        logger.error("wordcloud_font_not_found")
         raise RuntimeError("WordCloudフォントが見つかりません")
 
     compounds = load_compounds(db)
@@ -435,7 +454,10 @@ def generate_wordcloud_image(db, docs: list[dict]) -> io.BytesIO:
     words = " ".join(tokens)
 
     if not words.strip():
+        logger.warning("wordcloud_no_words_available")
         raise ValueError("no words")
+
+    logger.info("generating_wordcloud", tokens_count=len(tokens))
 
     wordcloud = WordCloud(
         font_path=font_path,
@@ -460,6 +482,7 @@ def generate_wordcloud_image(db, docs: list[dict]) -> io.BytesIO:
     finally:
         plt.close(figure)
 
+    logger.debug("wordcloud_generated_successfully")
     return buffer
 
 
@@ -564,10 +587,12 @@ def reset_learning_state(db) -> None:
     db.compounds.delete_many({})
     db.meta.delete_one({"_id": "last_learn_id"})
     clear_extract_tokens_cache()
+    logger.info("learning_state_reset")
 
 
 def clear_all_message_tokens(db) -> int:
     result = db.messages.update_many({}, {"$unset": {"tokens": ""}})
+    logger.info("all_message_tokens_cleared", modified_count=result.modified_count)
     return result.modified_count
 
 
@@ -597,6 +622,8 @@ def migrate_message_tokens(db, batch_size: int = 500) -> int:
     total = 0
     query = {"tokens": {"$exists": False}, "content": {"$type": "string", "$ne": ""}}
 
+    logger.info("message_token_migration_started", batch_size=batch_size)
+
     while True:
         docs = list(db.messages.find(query, {"_id": 1, "content": 1}).limit(batch_size))
         if not docs:
@@ -614,5 +641,11 @@ def migrate_message_tokens(db, batch_size: int = 500) -> int:
         if ops:
             db.messages.bulk_write(ops, ordered=False)
             total += len(ops)
+            logger.debug(
+                "message_token_migration_batch_processed",
+                batch_updated=len(ops),
+                total_updated=total,
+            )
 
+    logger.info("message_token_migration_completed", total_updated=total)
     return total

@@ -4,6 +4,7 @@ from typing import Optional
 from zoneinfo import ZoneInfo
 
 import discord
+import structlog
 from discord import app_commands
 from discord.ext import commands, tasks
 
@@ -25,6 +26,9 @@ from libs.wordcloud_service import (
 )
 from libs.parser import parse_discord_timestamp
 
+# ロガーの初期化
+logger = structlog.get_logger(__name__)
+
 
 class WordCloud(commands.Cog):
     JST = ZoneInfo("Asia/Tokyo")
@@ -40,24 +44,28 @@ class WordCloud(commands.Cog):
 
     async def cog_load(self) -> None:
         """Update compounds when the cog loads."""
-        print("[WordCloud] Cog loaded. Updating compounds database...")
+        logger.info("cog_loading", cog="WordCloud", action="updating_compounds")
         await asyncio.to_thread(update_compounds, self.bot.db)
-        print("[WordCloud] Compounds database updated on startup.")
+        logger.info("cog_loaded", cog="WordCloud", status="compounds_updated")
         asyncio.create_task(self._migrate_tokens_background())
 
     async def _migrate_tokens_background(self) -> None:
         """tokensフィールドがない旧メッセージをバックグラウンドで一括トークン化する。"""
         try:
-            print("[WordCloud] Starting token migration for existing messages...")
+            logger.info("token_migration_started", cog="WordCloud")
             count = await asyncio.to_thread(migrate_message_tokens, self.bot.db)
             if count > 0:
-                print(
-                    f"[WordCloud] Token migration complete: {count} messages updated."
+                logger.info(
+                    "token_migration_complete", cog="WordCloud", updated_count=count
                 )
             else:
-                print("[WordCloud] Token migration: all messages already have tokens.")
+                logger.info(
+                    "token_migration_skipped",
+                    cog="WordCloud",
+                    reason="all_messages_already_have_tokens",
+                )
         except Exception as e:
-            print(f"[WordCloud] Token migration error: {e}")
+            logger.error("token_migration_error", cog="WordCloud", error=str(e))
 
     def cog_unload(self):
         if self.check_scheduled_wordclouds.is_running():
@@ -74,13 +82,21 @@ class WordCloud(commands.Cog):
         interval_label: str,
     ) -> None:
         if task_loop.is_running():
-            print(
-                f"[WordCloud] Background task '{task_name}' is already running ({interval_label})."
+            logger.info(
+                "background_task_already_running",
+                cog="WordCloud",
+                task_name=task_name,
+                interval=interval_label,
             )
             return
 
         task_loop.start()
-        print(f"[WordCloud] Started background task '{task_name}' ({interval_label}).")
+        logger.info(
+            "background_task_started",
+            cog="WordCloud",
+            task_name=task_name,
+            interval=interval_label,
+        )
 
     @commands.Cog.listener()
     async def on_ready(self) -> None:
@@ -121,10 +137,13 @@ class WordCloud(commands.Cog):
             if next_iteration is not None:
                 next_iteration_text = next_iteration.astimezone(self.JST).isoformat()
 
-            print(
-                "[WordCloud] Background task status: "
-                f"name='{task_name}', interval='{interval_label}', "
-                f"running={task_loop.is_running()}, next_iteration={next_iteration_text}"
+            logger.info(
+                "background_task_status",
+                cog="WordCloud",
+                task_name=task_name,
+                interval=interval_label,
+                is_running=task_loop.is_running(),
+                next_iteration=next_iteration_text,
             )
 
     @wordcloud_group.command(
@@ -186,7 +205,9 @@ class WordCloud(commands.Cog):
                 description="データベースクエリ中にエラーが発生しました",
             )
             await interaction.followup.send(embed=embed)
-            print(f"Database query error: {error}")
+            logger.error(
+                "db_query_error", cog="WordCloud", command="generate", error=str(error)
+            )
             return
 
         if not docs:
@@ -308,7 +329,9 @@ class WordCloud(commands.Cog):
             await interaction.response.send_message(embed=embed)
 
         except Exception as e:
-            print(f"Error: {e}")
+            logger.error(
+                "schedule_error", cog="WordCloud", command="schedule", error=str(e)
+            )
             await interaction.response.send_message(
                 "設定中にエラーが発生しました。", ephemeral=True
             )
@@ -379,7 +402,7 @@ class WordCloud(commands.Cog):
                     last_exec_str = "未実行"
 
                 description_lines.append(
-                    f"**{idx}.** {channel_mention} | {freq} | {schedule_time} (JST) | {status}\n　{last_exec_str}"
+                    f"**{idx}.** {channel_mention} | {freq} | {schedule_time} (JST) | {status}\n {last_exec_str}"
                 )
 
             embed = discord.Embed(
@@ -395,7 +418,9 @@ class WordCloud(commands.Cog):
                 description="スケジュール一覧の取得中にエラーが発生しました。",
             )
             await interaction.response.send_message(embed=embed, ephemeral=True)
-            print(f"Error listing schedules: {e}")
+            logger.error(
+                "list_schedules_error", cog="WordCloud", command="list", error=str(e)
+            )
 
     @wordcloud_group.command(
         name="remove",
@@ -449,7 +474,9 @@ class WordCloud(commands.Cog):
                 )
                 await interaction.response.send_message(embed=embed, ephemeral=True)
         except Exception as e:
-            print(f"Remove Error: {e}")
+            logger.error(
+                "remove_schedule_error", cog="WordCloud", command="remove", error=str(e)
+            )
             embed = embed_helper.create_error_embed(
                 title="削除失敗",
                 description="内部エラーが発生しました。",
@@ -471,7 +498,12 @@ class WordCloud(commands.Cog):
                 )
             )
         except Exception as e:
-            print(f"Fetch Error: {e}")
+            logger.error(
+                "fetch_schedules_error",
+                cog="WordCloud",
+                task="check_scheduled_wordclouds",
+                error=str(e),
+            )
             return
 
         for guild_doc in cursor:
@@ -528,19 +560,28 @@ class WordCloud(commands.Cog):
         try:
             guild = self.bot.get_guild(int(guild_id))
             if guild is None:
-                print(f"Guild {guild_id} not found")
+                logger.warning(
+                    "scheduled_guild_not_found", cog="WordCloud", guild_id=guild_id
+                )
                 return
 
             channel = guild.get_channel(int(channel_id))
             if channel is None:
-                print(f"Channel {channel_id} not found in guild {guild_id}")
+                logger.warning(
+                    "scheduled_channel_not_found",
+                    cog="WordCloud",
+                    guild_id=guild_id,
+                    channel_id=channel_id,
+                )
                 return
 
             now_jst = discord.utils.utcnow().astimezone(self.JST)
 
             start_dt_jst = get_schedule_start_datetime(frequency, now_jst)
             if start_dt_jst is None:
-                print(f"Unknown schedule frequency: {frequency}")
+                logger.warning(
+                    "unknown_schedule_frequency", cog="WordCloud", frequency=frequency
+                )
                 return
 
             # DBクエリ用にUTCのdatetimeに変換
@@ -555,7 +596,12 @@ class WordCloud(commands.Cog):
                     end=None,  # 定期実行は「今」までなのでNone
                 )
             except Exception as error:
-                print(f"Database query error for scheduled wordcloud: {error}")
+                logger.error(
+                    "db_query_error",
+                    cog="WordCloud",
+                    task="execute_scheduled_wordcloud",
+                    error=str(error),
+                )
                 return
 
             if not docs:
@@ -575,7 +621,12 @@ class WordCloud(commands.Cog):
                     docs,
                 )
             except (ValueError, RuntimeError) as error:
-                print(f"Error generating wordcloud: {error}")
+                logger.error(
+                    "wordcloud_generation_error",
+                    cog="WordCloud",
+                    task="execute_scheduled_wordcloud",
+                    error=str(error),
+                )
                 await asyncio.to_thread(
                     update_last_executed,
                     self.bot.db,
@@ -609,7 +660,12 @@ class WordCloud(commands.Cog):
             )
 
         except Exception as e:
-            print(f"Error executing scheduled wordcloud: {e}")
+            logger.error(
+                "scheduled_wordcloud_execution_error",
+                cog="WordCloud",
+                task="execute_scheduled_wordcloud",
+                error=str(e),
+            )
 
     @tasks.loop(minutes=10)
     async def background_learn(self):
@@ -631,28 +687,48 @@ class WordCloud(commands.Cog):
 
             await asyncio.to_thread(_learn_batch_sync)
         except Exception as error:
-            print(f"Error in background_learn loop: {error}")
+            logger.error(
+                "background_task_error",
+                cog="WordCloud",
+                task="background_learn",
+                error=str(error),
+            )
 
     @background_learn.before_loop
     async def before_background_learn(self):
         try:
             await self.bot.wait_until_ready()
         except Exception as error:
-            print(f"Error preparing background_learn loop: {error}")
+            logger.error(
+                "background_task_prepare_error",
+                cog="WordCloud",
+                task="background_learn",
+                error=str(error),
+            )
 
     @tasks.loop(hours=24)
     async def update_compounds_task(self):
         try:
             await asyncio.to_thread(update_compounds, self.bot.db)
         except Exception as error:
-            print(f"Error in update_compounds_task loop: {error}")
+            logger.error(
+                "background_task_error",
+                cog="WordCloud",
+                task="update_compounds_task",
+                error=str(error),
+            )
 
     @update_compounds_task.before_loop
     async def before_update_compounds_task(self):
         try:
             await self.bot.wait_until_ready()
         except Exception as error:
-            print(f"Error preparing update_compounds_task loop: {error}")
+            logger.error(
+                "background_task_prepare_error",
+                cog="WordCloud",
+                task="update_compounds_task",
+                error=str(error),
+            )
 
 
 async def setup(bot: commands.Bot):
