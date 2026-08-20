@@ -19,16 +19,6 @@ from libs.wordcloud_service import (
 
 
 class Admin(commands.Cog):
-    admin_group = app_commands.Group(
-        name="admin",
-        description="管理者向けコマンド",
-    )
-    reset_group = app_commands.Group(
-        name="reset",
-        description="管理者向けリセットコマンド",
-        parent=admin_group,
-    )
-
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self._relearn_lock = asyncio.Lock()
@@ -101,11 +91,11 @@ class Admin(commands.Cog):
         update_compounds(self.bot.db)
         return learned_message_count, cleared_token_count, recalculated_token_count
 
-    @reset_group.command(
+    @commands.command(
         name="learn",
         description="学習データをリセットして全メッセージを再学習します",
     )
-    async def reset_learn(self, interaction: discord.Interaction):
+    async def reset_learn(self, ctx: commands.Context):
         embed_helper = EmbedHelper(function_name="Admin Reset learn")
 
         if ADMIN_USER_ID is None:
@@ -113,15 +103,15 @@ class Admin(commands.Cog):
                 title="設定エラー",
                 description="config.py に ADMIN_USER_ID が設定されていません。",
             )
-            await interaction.response.send_message(embed=embed, ephemeral=True)
+            await ctx.reply(embed=embed)
             return
 
-        if not self._is_admin_user(interaction.user.id):
+        if not self._is_admin_user(ctx.author.id):
             embed = embed_helper.create_error_embed(
                 title="権限エラー",
                 description="このコマンドは管理者のみ実行できます。",
             )
-            await interaction.response.send_message(embed=embed, ephemeral=True)
+            await ctx.reply(embed=embed)
             return
 
         if self._relearn_lock.locked():
@@ -129,10 +119,21 @@ class Admin(commands.Cog):
                 title="処理中",
                 description="現在、再学習処理を実行中です。完了まで待ってください。",
             )
-            await interaction.response.send_message(embed=embed, ephemeral=True)
+            try:
+                await ctx.author.send(embed=embed)
+            except discord.Forbidden:
+                await ctx.reply(embed_helper.create_error_embed(
+                    title="DMに送信できませんでした。",
+                    description="DMを受け取れるようにしてください。"
+                ))
+                return
+            except discord.HTTPException:
+                await ctx.reply(embed_helper.create_error_embed(
+                    title="DMに送信できませんでした。",
+                    description="DMを受け取れるようにしてください。"
+                ))
+                return
             return
-
-        await interaction.response.defer(ephemeral=True, thinking=True)
 
         async with self._relearn_lock:
             try:
@@ -146,7 +147,20 @@ class Admin(commands.Cog):
                     title="再学習エラー",
                     description="再学習中にエラーが発生しました。ログを確認してください。",
                 )
-                await interaction.followup.send(embed=embed, ephemeral=True)
+                try:
+                    await ctx.author.send(embed=embed)
+                except discord.Forbidden:
+                    await ctx.reply(embed_helper.create_error_embed(
+                        title="DMに送信できませんでした。",
+                        description="DMを受け取れるようにしてください。"
+                    ))
+                    return
+                except discord.HTTPException:
+                    await ctx.reply(embed_helper.create_error_embed(
+                        title="DMに送信できませんでした。",
+                        description="DMを受け取れるようにしてください。"
+                    ))
+                    return
                 print(f"[Admin] Reset learn command failed: {error}")
                 return
 
@@ -159,13 +173,26 @@ class Admin(commands.Cog):
                 f"tokensを再計算したメッセージ: {recalculated_token_count}件"
             ),
         )
-        await interaction.followup.send(embed=embed, ephemeral=True)
+        try:
+            await ctx.author.send(embed=embed)
+        except discord.Forbidden:
+            await ctx.reply(embed_helper.create_error_embed(
+                title="DMに送信できませんでした。",
+                description="DMを受け取れるようにしてください。"
+            ))
+            return
+        except discord.HTTPException:
+            await ctx.reply(embed_helper.create_error_embed(
+                title="DMに送信できませんでした。",
+                description="DMを受け取れるようにしてください。"
+            ))
+            return
 
-    @admin_group.command(
+    @commands.command(
         name="server_stats",
         description="導入サーバーごとのメッセージ数と収集ユーザー数を表示します",
     )
-    async def server_stats(self, interaction: discord.Interaction):
+    async def server_stats(self, ctx: commands.Context):
         embed_helper = EmbedHelper(function_name="Admin Server Stats")
 
         if ADMIN_USER_ID is None:
@@ -173,18 +200,29 @@ class Admin(commands.Cog):
                 title="設定エラー",
                 description="config.py に ADMIN_USER_ID が設定されていません。",
             )
-            await interaction.response.send_message(embed=embed, ephemeral=True)
+            try:
+                await ctx.author.send(embed=embed)
+            except discord.Forbidden:
+                await ctx.reply(embed_helper.create_error_embed(
+                    title="DMに送信できませんでした。",
+                    description="DMを受け取れるようにしてください。"
+                ))
+                return
+            except discord.HTTPException:
+                await ctx.reply(embed_helper.create_error_embed(
+                    title="DMに送信できませんでした。",
+                    description="DMを受け取れるようにしてください。"
+                ))
+                return
             return
 
-        if not self._is_admin_user(interaction.user.id):
+        if not self._is_admin_user(ctx.author.id):
             embed = embed_helper.create_error_embed(
                 title="権限エラー",
                 description="このコマンドは管理者のみ実行できます。",
             )
-            await interaction.response.send_message(embed=embed, ephemeral=True)
+            await ctx.reply(embed=embed)
             return
-
-        await interaction.response.defer(ephemeral=True, thinking=True)
 
         try:
             stats = await asyncio.to_thread(get_guild_collection_stats, self.bot.db)
@@ -193,7 +231,20 @@ class Admin(commands.Cog):
                 title="集計エラー",
                 description="サーバー集計の取得中にエラーが発生しました。",
             )
-            await interaction.followup.send(embed=embed, ephemeral=True)
+            try:
+                await ctx.author.send(embed=embed)
+            except discord.Forbidden:
+                await ctx.reply(embed_helper.create_error_embed(
+                    title="DMに送信できませんでした。",
+                    description="DMを受け取れるようにしてください。"
+                ))
+                return
+            except discord.HTTPException:
+                await ctx.reply(embed_helper.create_error_embed(
+                    title="DMに送信できませんでした。",
+                    description="DMを受け取れるようにしてください。"
+                ))
+                return
             print(f"[Admin] Collection stats command failed: {error}")
             return
 
@@ -203,7 +254,20 @@ class Admin(commands.Cog):
                 title="データなし",
                 description="表示可能なサーバー情報がありません。",
             )
-            await interaction.followup.send(embed=embed, ephemeral=True)
+            try:
+                await ctx.author.send(embed=embed)
+            except discord.Forbidden:
+                await ctx.reply(embed_helper.create_error_embed(
+                    title="DMに送信できませんでした。",
+                    description="DMを受け取れるようにしてください。"
+                ))
+                return
+            except discord.HTTPException:
+                await ctx.reply(embed_helper.create_error_embed(
+                    title="DMに送信できませんでした。",
+                    description="DMを受け取れるようにしてください。"
+                ))
+                return
             return
 
         max_desc_len = 3800
@@ -223,7 +287,20 @@ class Admin(commands.Cog):
             title="導入サーバー集計",
             description="\n".join(description_lines),
         )
-        await interaction.followup.send(embed=embed, ephemeral=True)
+        try:
+            await ctx.author.send(embed=embed)
+        except discord.Forbidden:
+            await ctx.reply(embed_helper.create_error_embed(
+                title="DMに送信できませんでした。",
+                description="DMを受け取れるようにしてください。"
+            ))
+            return
+        except discord.HTTPException:
+            await ctx.reply(embed_helper.create_error_embed(
+                title="DMに送信できませんでした。",
+                description="DMを受け取れるようにしてください。"
+            ))
+            return
 
 
 async def setup(bot: commands.Bot):
