@@ -43,7 +43,9 @@ class Admin(commands.Cog):
         stats: list[dict[str, int | str]],
     ) -> list[str]:
         guild_name_by_id = {str(guild.id): guild.name for guild in self.bot.guilds}
-        merged_rows: list[tuple[str, int, int]] = []
+
+        # guild_id も保持する
+        merged_rows: list[tuple[str, str, int, int]] = []
         seen_guild_ids: set[str] = set()
 
         for row in stats:
@@ -56,26 +58,42 @@ class Admin(commands.Cog):
 
             db_guild_name = str(row.get("guild_name") or "Unknown Guild")
             display_name = guild_name_by_id.get(guild_id, db_guild_name)
-            merged_rows.append((display_name, message_count, collected_user_count))
 
+            merged_rows.append(
+                (
+                    guild_id,
+                    display_name,
+                    message_count,
+                    collected_user_count,
+                )
+            )
+
+        # DBにデータがない導入サーバーも表示
         for guild in self.bot.guilds:
             guild_id = str(guild.id)
+
             if guild_id in seen_guild_ids:
                 continue
-            merged_rows.append((guild.name, 0, 0))
 
-        merged_rows.sort(key=lambda item: item[1], reverse=True)
+            merged_rows.append((guild_id, guild.name, 0, 0))
+
+        # メッセージ件数の降順
+        merged_rows.sort(key=lambda item: item[2], reverse=True)
 
         lines = [
             (
-                f"{index}. {guild_name} ({guild_id}) | メッセージ: {message_count:,}件"
-                f" | 収集ユーザー: {collected_user_count:,}人"
+                f"{index}. {guild_name} ({guild_id}) | "
+                f"メッセージ: {message_count:,}件 | "
+                f"収集ユーザー: {collected_user_count:,}人"
             )
-            for index, (guild_name, message_count, collected_user_count) in enumerate(
-                merged_rows,
-                start=1,
-            )
+            for index, (
+                guild_id,
+                guild_name,
+                message_count,
+                collected_user_count,
+            ) in enumerate(merged_rows, start=1)
         ]
+
         return lines
 
     def _reset_and_relearn_sync(self) -> tuple[int, int, int]:
