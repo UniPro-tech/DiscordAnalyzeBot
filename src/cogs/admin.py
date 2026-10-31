@@ -57,7 +57,7 @@ class Admin(commands.Cog):
 
         lines = [
             (
-                f"{index}. {guild_name} | メッセージ: {message_count:,}件"
+                f"{index}. {guild_name} ({guild_id}) | メッセージ: {message_count:,}件"
                 f" | 収集ユーザー: {collected_user_count:,}人"
             )
             for index, (guild_name, message_count, collected_user_count) in enumerate(
