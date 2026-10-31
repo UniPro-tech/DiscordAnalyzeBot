@@ -1,9 +1,7 @@
 import asyncio
 
 import discord
-from discord import app_commands
 from discord.ext import commands
-from typing import Optional
 
 from config import ADMIN_USER_ID
 from libs.embed import EmbedHelper
@@ -330,55 +328,6 @@ class Admin(commands.Cog):
                 )
             )
             return
-
-    @commands.command(
-        name="graph",
-        description="導入サーバーごとのメッセージ数と収集ユーザー数を表示します",
-    )
-    @app_commands.describe(
-        start="解析する期間の初め (@time機能を利用)",
-        end="解析する期間の終わり (@time機能を利用)",
-        user="特定のユーザーで絞り込み",
-        channel="特定のチャンネルで絞り込み",
-        interval="集計の間隔（月別 または 日別）",
-        server="ギルドID",
-    )
-    @app_commands.choices(
-        interval=[
-            app_commands.Choice(name="月別", value="monthly"),
-            app_commands.Choice(name="日別", value="daily"),
-        ]
-    )
-    async def graphs_posts(
-        self,
-        interaction: discord.Interaction,
-        server: str,
-        start: Optional[str] = None,
-        end: Optional[str] = None,
-        user: Optional[discord.User] = None,
-        channel: Optional[discord.TextChannel] = None,
-        interval: Optional[app_commands.Choice[str]] = None,
-    ):
-        interval_value = interval.value if interval else "monthly"
-
-        statistics_cog = self.bot.get_cog("Statistics")
-
-        if statistics_cog is None:
-            await interaction.response.send_message(
-                "Statistics Cogが読み込まれていません。",
-                ephemeral=True,
-            )
-            return
-
-        await statistics_cog.handle_graph_request(
-            interaction,
-            "posts",
-            start,
-            end,
-            user,
-            channel,
-            interval=interval_value,
-        )
 
 
 async def setup(bot: commands.Bot):

@@ -213,10 +213,9 @@ class Statistics(commands.Cog):
 
         return query
 
-    async def handle_graph_request(
+    async def _handle_graph_request(
         self,
         interaction: discord.Interaction,
-        server: str,
         graph_type: str,
         start: Optional[str],
         end: Optional[str],
@@ -263,7 +262,7 @@ class Statistics(commands.Cog):
 
         user_id = str(user.id) if user else None
         channel_id = str(channel.id) if channel else None
-        guild_id = server
+        guild_id = str(interaction.guild_id)
 
         logger.info(
             "graph_request_received",
@@ -441,15 +440,8 @@ class Statistics(commands.Cog):
         interval: Optional[app_commands.Choice[str]] = None,
     ):
         interval_value = interval.value if interval else "monthly"
-        await self.handle_graph_request(
-            interaction,
-            interaction.guild_id,
-            "posts",
-            start,
-            end,
-            user,
-            channel,
-            interval=interval_value,
+        await self._handle_graph_request(
+            interaction, "posts", start, end, user, channel, interval=interval_value
         )
 
     @graphs_group.command(
@@ -478,15 +470,8 @@ class Statistics(commands.Cog):
         interval: Optional[app_commands.Choice[str]] = None,
     ):
         interval_value = interval.value if interval else "monthly"
-        await self.handle_graph_request(
-            interaction,
-            interaction.guild_id,
-            "users",
-            start,
-            end,
-            user,
-            channel,
-            interval=interval_value,
+        await self._handle_graph_request(
+            interaction, "users", start, end, user, channel, interval=interval_value
         )
 
     @graphs_group.command(
@@ -504,8 +489,8 @@ class Statistics(commands.Cog):
         end: Optional[str] = None,
         user: Optional[discord.User] = None,
     ):
-        await self.handle_graph_request(
-            interaction, interaction.guild_id, "channels", start, end, user, None
+        await self._handle_graph_request(
+            interaction, "channels", start, end, user, None
         )
 
     @graphs_group.command(
@@ -525,8 +510,8 @@ class Statistics(commands.Cog):
         user: Optional[discord.User] = None,
         channel: Optional[discord.TextChannel] = None,
     ):
-        await self.handle_graph_request(
-            interaction, interaction.guild_id, "moving_avg", start, end, user, channel
+        await self._handle_graph_request(
+            interaction, "moving_avg", start, end, user, channel
         )
 
 
