@@ -1,6 +1,7 @@
 import asyncio
 
 import discord
+from discord import app_commands
 from discord.ext import commands
 
 from config import ADMIN_USER_ID
@@ -121,20 +122,16 @@ class Admin(commands.Cog):
             try:
                 await ctx.author.send(embed=embed)
             except discord.Forbidden:
-                await ctx.reply(
-                    embed_helper.create_error_embed(
-                        title="DMに送信できませんでした。",
-                        description="DMを受け取れるようにしてください。",
-                    )
-                )
+                await ctx.reply(embed_helper.create_error_embed(
+                    title="DMに送信できませんでした。",
+                    description="DMを受け取れるようにしてください。"
+                ))
                 return
             except discord.HTTPException:
-                await ctx.reply(
-                    embed_helper.create_error_embed(
-                        title="DMに送信できませんでした。",
-                        description="DMを受け取れるようにしてください。",
-                    )
-                )
+                await ctx.reply(embed_helper.create_error_embed(
+                    title="DMに送信できませんでした。",
+                    description="DMを受け取れるようにしてください。"
+                ))
                 return
             return
 
@@ -153,20 +150,16 @@ class Admin(commands.Cog):
                 try:
                     await ctx.author.send(embed=embed)
                 except discord.Forbidden:
-                    await ctx.reply(
-                        embed_helper.create_error_embed(
-                            title="DMに送信できませんでした。",
-                            description="DMを受け取れるようにしてください。",
-                        )
-                    )
+                    await ctx.reply(embed_helper.create_error_embed(
+                        title="DMに送信できませんでした。",
+                        description="DMを受け取れるようにしてください。"
+                    ))
                     return
                 except discord.HTTPException:
-                    await ctx.reply(
-                        embed_helper.create_error_embed(
-                            title="DMに送信できませんでした。",
-                            description="DMを受け取れるようにしてください。",
-                        )
-                    )
+                    await ctx.reply(embed_helper.create_error_embed(
+                        title="DMに送信できませんでした。",
+                        description="DMを受け取れるようにしてください。"
+                    ))
                     return
                 print(f"[Admin] Reset learn command failed: {error}")
                 return
@@ -183,20 +176,16 @@ class Admin(commands.Cog):
         try:
             await ctx.author.send(embed=embed)
         except discord.Forbidden:
-            await ctx.reply(
-                embed_helper.create_error_embed(
-                    title="DMに送信できませんでした。",
-                    description="DMを受け取れるようにしてください。",
-                )
-            )
+            await ctx.reply(embed_helper.create_error_embed(
+                title="DMに送信できませんでした。",
+                description="DMを受け取れるようにしてください。"
+            ))
             return
         except discord.HTTPException:
-            await ctx.reply(
-                embed_helper.create_error_embed(
-                    title="DMに送信できませんでした。",
-                    description="DMを受け取れるようにしてください。",
-                )
-            )
+            await ctx.reply(embed_helper.create_error_embed(
+                title="DMに送信できませんでした。",
+                description="DMを受け取れるようにしてください。"
+            ))
             return
 
     @commands.command(
@@ -214,20 +203,16 @@ class Admin(commands.Cog):
             try:
                 await ctx.author.send(embed=embed)
             except discord.Forbidden:
-                await ctx.reply(
-                    embed_helper.create_error_embed(
-                        title="DMに送信できませんでした。",
-                        description="DMを受け取れるようにしてください。",
-                    )
-                )
+                await ctx.reply(embed_helper.create_error_embed(
+                    title="DMに送信できませんでした。",
+                    description="DMを受け取れるようにしてください。"
+                ))
                 return
             except discord.HTTPException:
-                await ctx.reply(
-                    embed_helper.create_error_embed(
-                        title="DMに送信できませんでした。",
-                        description="DMを受け取れるようにしてください。",
-                    )
-                )
+                await ctx.reply(embed_helper.create_error_embed(
+                    title="DMに送信できませんでした。",
+                    description="DMを受け取れるようにしてください。"
+                ))
                 return
             return
 
@@ -249,20 +234,16 @@ class Admin(commands.Cog):
             try:
                 await ctx.author.send(embed=embed)
             except discord.Forbidden:
-                await ctx.reply(
-                    embed_helper.create_error_embed(
-                        title="DMに送信できませんでした。",
-                        description="DMを受け取れるようにしてください。",
-                    )
-                )
+                await ctx.reply(embed_helper.create_error_embed(
+                    title="DMに送信できませんでした。",
+                    description="DMを受け取れるようにしてください。"
+                ))
                 return
             except discord.HTTPException:
-                await ctx.reply(
-                    embed_helper.create_error_embed(
-                        title="DMに送信できませんでした。",
-                        description="DMを受け取れるようにしてください。",
-                    )
-                )
+                await ctx.reply(embed_helper.create_error_embed(
+                    title="DMに送信できませんでした。",
+                    description="DMを受け取れるようにしてください。"
+                ))
                 return
             print(f"[Admin] Collection stats command failed: {error}")
             return
@@ -276,20 +257,16 @@ class Admin(commands.Cog):
             try:
                 await ctx.author.send(embed=embed)
             except discord.Forbidden:
-                await ctx.reply(
-                    embed_helper.create_error_embed(
-                        title="DMに送信できませんでした。",
-                        description="DMを受け取れるようにしてください。",
-                    )
-                )
+                await ctx.reply(embed_helper.create_error_embed(
+                    title="DMに送信できませんでした。",
+                    description="DMを受け取れるようにしてください。"
+                ))
                 return
             except discord.HTTPException:
-                await ctx.reply(
-                    embed_helper.create_error_embed(
-                        title="DMに送信できませんでした。",
-                        description="DMを受け取れるようにしてください。",
-                    )
-                )
+                await ctx.reply(embed_helper.create_error_embed(
+                    title="DMに送信できませんでした。",
+                    description="DMを受け取れるようにしてください。"
+                ))
                 return
             return
 
@@ -313,20 +290,16 @@ class Admin(commands.Cog):
         try:
             await ctx.author.send(embed=embed)
         except discord.Forbidden:
-            await ctx.reply(
-                embed_helper.create_error_embed(
-                    title="DMに送信できませんでした。",
-                    description="DMを受け取れるようにしてください。",
-                )
-            )
+            await ctx.reply(embed_helper.create_error_embed(
+                title="DMに送信できませんでした。",
+                description="DMを受け取れるようにしてください。"
+            ))
             return
         except discord.HTTPException:
-            await ctx.reply(
-                embed_helper.create_error_embed(
-                    title="DMに送信できませんでした。",
-                    description="DMを受け取れるようにしてください。",
-                )
-            )
+            await ctx.reply(embed_helper.create_error_embed(
+                title="DMに送信できませんでした。",
+                description="DMを受け取れるようにしてください。"
+            ))
             return
 
 
