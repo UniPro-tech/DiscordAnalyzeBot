@@ -229,7 +229,7 @@ class Admin(commands.Cog):
 
     @admin_group.command(name="posts", description="投稿数推移グラフを生成します")
     @app_commands.describe(
-        server="guild ID"
+        server="guild ID",
         start="解析する期間の初め (@time機能を利用)",
         end="解析する期間の終わり (@time機能を利用)",
         user="特定のユーザーで絞り込み",
