@@ -1,4 +1,5 @@
 import asyncio
+from typing import Optional
 
 import discord
 from discord import app_commands
@@ -16,6 +17,7 @@ from libs.wordcloud_service import (
     update_compounds,
     update_last_learn_id,
 )
+from cogs.statistics import Statistics
 
 
 class Admin(commands.Cog):
@@ -66,7 +68,7 @@ class Admin(commands.Cog):
 
         lines = [
             (
-                f"{index}. {guild_name} | メッセージ: {message_count:,}件"
+                f"{index}. {guild_name} ({guild_id}) | メッセージ: {message_count:,}件"
                 f" | 収集ユーザー: {collected_user_count:,}人"
             )
             for index, (guild_name, message_count, collected_user_count) in enumerate(
@@ -224,6 +226,58 @@ class Admin(commands.Cog):
             description="\n".join(description_lines),
         )
         await interaction.followup.send(embed=embed, ephemeral=True)
+
+    @admin_group.command(name="posts", description="投稿数推移グラフを生成します")
+    @app_commands.describe(
+        start="解析する期間の初め (@time機能を利用)",
+        end="解析する期間の終わり (@time機能を利用)",
+        user="特定のユーザーで絞り込み",
+        channel="特定のチャンネルで絞り込み",
+        interval="集計の間隔（月別 または 日別）",
+    )
+    @app_commands.choices(
+        interval=[
+            app_commands.Choice(name="月別", value="monthly"),
+            app_commands.Choice(name="日別", value="daily"),
+        ]
+    )
+    async def graphs_posts(
+        self,
+        interaction: discord.Interaction,
+        start: Optional[str] = None,
+        end: Optional[str] = None,
+        user: Optional[discord.User] = None,
+        channel: Optional[discord.TextChannel] = None,
+        interval: Optional[app_commands.Choice[str]] = None,
+    ):
+        embed_helper = EmbedHelper(function_name="Admin Server Stats")
+        if ADMIN_USER_ID is None:
+            embed = embed_helper.create_error_embed(
+                title="設定エラー",
+                description="config.py に ADMIN_USER_ID が設定されていません。",
+            )
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+            return
+
+        if not self._is_admin_user(interaction.user.id):
+            embed = embed_helper.create_error_embed(
+                title="権限エラー",
+                description="このコマンドは管理者のみ実行できます。",
+            )
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+            return
+        interval_value = interval.value if interval else "monthly"
+        await Statistics.handle_graph_request(
+            interaction,
+            interaction.guild_id,
+            "posts",
+            start,
+            end,
+            user,
+            channel,
+            interval=interval_value,
+            ephemeral=True,
+        )
 
 
 async def setup(bot: commands.Bot):
