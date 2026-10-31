@@ -269,7 +269,16 @@ class Admin(commands.Cog):
             await interaction.response.send_message(embed=embed, ephemeral=True)
             return
         interval_value = interval.value if interval else "monthly"
-        await Statistics.handle_graph_request(
+        statistics = self.bot.get_cog("Statistics")
+
+        if statistics is None:
+            embed = embed_helper.create_error_embed(
+                title="内部エラー",
+                description="Statistics Cog がロードされていません。",
+            )
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+            return
+        await statistics.handle_graph_request(
             interaction=interaction,
             guild_id=server,
             graph_type="posts",
