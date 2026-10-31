@@ -229,6 +229,7 @@ class Admin(commands.Cog):
 
     @admin_group.command(name="posts", description="投稿数推移グラフを生成します")
     @app_commands.describe(
+        server="guild ID"
         start="解析する期間の初め (@time機能を利用)",
         end="解析する期間の終わり (@time機能を利用)",
         user="特定のユーザーで絞り込み",
@@ -244,6 +245,7 @@ class Admin(commands.Cog):
     async def graphs_posts(
         self,
         interaction: discord.Interaction,
+        server: str,
         start: Optional[str] = None,
         end: Optional[str] = None,
         user: Optional[discord.User] = None,
@@ -269,7 +271,7 @@ class Admin(commands.Cog):
         interval_value = interval.value if interval else "monthly"
         await Statistics.handle_graph_request(
             interaction,
-            interaction.guild_id,
+            server,
             "posts",
             start,
             end,
