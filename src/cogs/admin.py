@@ -372,7 +372,6 @@ class Admin(commands.Cog):
 
         await statistics_cog.handle_graph_request(
             interaction,
-            server,
             "posts",
             start,
             end,
