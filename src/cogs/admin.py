@@ -271,7 +271,7 @@ class Admin(commands.Cog):
         interval_value = interval.value if interval else "monthly"
         await Statistics.handle_graph_request(
             interaction=interaction,
-            server=server,
+            guild_id=server,
             graph_type="posts",
             start=start,
             end=end,
